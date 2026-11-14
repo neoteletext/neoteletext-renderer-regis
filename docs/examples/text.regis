@@ -1,0 +1,10 @@
+S(I0,E)
+W(I7)P[40,30]T(S1)'Size 1: The quick brown fox 0123456789'
+W(I6)P[40,70]T(S2)'Size 2: ReGIS text'
+W(I3)P[40,120]T(S4)'Size 4'
+W(I5)P[420,150]T(S2,I22)'italic'P[560,150]T(I0)
+W(I2)P[420,300]T(D90,S2)'up'T(D0,S2)
+W(I4)P[520,300]T(D45,S1)'tilted'T(D0,S1)
+W(I1)P[40,250]T(S2)'H'7'2'1'O  E=mc'2'2'
+W(I7)P[40,330]T(S1,W(R,N1))' replace + negative '
+P[40,380]T(W(V,N0))'T(S n) size, T(D a) tilt, T(I a) italic'

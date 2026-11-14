@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>neoteletext-regis: plan for the server</title>
+<style>
+:root { --bg: #fbfbfd; --fg: #1c1d24; --muted: #5b5e70; --rule: #d6d8e2; --code-bg: #eeeff5; --accent: #2c3fb8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14151c; --fg: #e4e5ee; --muted: #9a9db2; --rule: #2f3142; --code-bg: #1f2130; --accent: #93a0ff; }
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; }
+main { max-width: 46rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 0.5rem; }
+h2 { font-size: 1.35rem; margin: 2.5rem 0 0.5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.05rem; margin: 1.5rem 0 0.25rem; }
+p, li { max-width: 42rem; }
+a { color: var(--accent); }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
+code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }
+pre { background: var(--code-bg); padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; line-height: 1.45; }
+pre code { background: none; padding: 0; }
+figure { margin: 1rem 0; }
+figure img { width: 100%; height: auto; image-rendering: pixelated; border: 1px solid var(--rule); background: #000; display: block; }
+figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 0.3rem; }
+table { border-collapse: collapse; margin: 0.75rem 0; font-size: 0.95rem; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 0.3rem 0.9rem 0.3rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.lede { color: var(--muted); font-size: 1.1rem; }
+nav { font-size: 0.95rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<nav><a href="guide.html">Guide</a> · <a href="reference.html">Reference</a> · <a href="integration-browser.html">Browser plan</a></nav>
+<h1>Plan: ReGIS in the NeoTeletext server</h1>
+<p class="lede">A proposal for carrying ReGIS pages through the Rust WebSocket server (<code>neoteletext-app-server</code>). Nothing here is built. It was written on 14 November 2026 from a reading of the server at commit <code>8d0c7b3</code>, the protocol document in <code>neoteletext-common</code>, and the TypeScript and Python kits.</p>
+
+<h2>What the server does today</h2>
+<ul>
+<li><strong>One format.</strong> A channel's program (a separate process speaking JSON lines, protocol 7) sends <code>page</code> messages; the runtime (<code>crates/teletext-runtime</code>, <code>no_std</code>, no I/O) encodes them with the engine as 42-byte teletext packets and sends them in binary WebSocket messages. There is no content-type field anywhere.</li>
+<li><strong>The downstream rule.</strong> DEC-1459: "Downstream to a receiver is a T42 stream, and nothing else." What is not page content "travels as records in packet 4/31 on data channel 12", and a record type a receiver does not know is skipped by its type byte. Types 1 to 12 are in use; a record body is at most 8,192 bytes.</li>
+<li><strong>Negotiation.</strong> HELLO and WELCOME carry a capability bit set; bits 23 and up are free. A sender uses a new feature "only when both sides set its capability".</li>
+<li><strong>Checks.</strong> Every packet sent passes the engine's <code>is_valid_stream_packet</code>; every program message is read strictly against <code>protocol/schema-7.json</code>, and an unknown field refuses the whole line.</li>
+<li><strong>Rules for change.</strong> Web-protocol reading and record encoders belong in the engine, which the server pins by git revision; wire vectors live in <code>neoteletext-common/wire-vectors.tsv</code>; a feature that adds an input or output needs a proposal, a security analysis and the owner's adoption decision first; every library needs approval by name.</li>
+</ul>
+
+<h2>The choice to make</h2>
+<table>
+<tr><th>Option</th><th>How ReGIS reaches the browser</th><th>Verdict</th></tr>
+<tr><td>A. A new record type</td><td>ReGIS bytes travel as record type 13 on data channel 12, tied to a page and sub-page.</td><td><strong>Recommended.</strong> Stays inside DEC-1459, which foresaw "any record added later". Old receivers skip it. Bytes stay small (ReGIS is compact).</td></tr>
+<tr><td>B. A second kind of WebSocket message</td><td>ReGIS bytes in their own binary or text messages.</td><td>Rejected: it is the "second parser" DEC-1459 ruled out, and a microcontroller receiver would need a second framing.</td></tr>
+<tr><td>C. Render on the server, send teletext</td><td>The server draws the picture with the <code>regis</code> crate and sends it as Level 2.5 mosaics through the engine's image converter.</td><td><strong>Recommended as the fallback</strong> for receivers that do not announce ReGIS. Loses resolution (800×480 becomes 80×75 mosaic dots) but every receiver shows something.</td></tr>
+<tr><td>D. Render on the server, send pixels</td><td>384,000 bytes a frame.</td><td>Rejected: against DEC-1459 and far larger than the ReGIS itself.</td></tr>
+</table>
+
+<h2>Design (options A and C together)</h2>
+<h3>1. Capability</h3>
+<p>Capability bit 23, <code>REGIS</code>. The browser sets it in HELLO when it can draw ReGIS; the server agrees it in WELCOME. Without it the server sends the mosaic fallback and no ReGIS records.</p>
+
+<h3>2. Program protocol (version 8)</h3>
+<p>One new program-to-server message beside <code>page</code>:</p>
+<pre><code>{"type":"regis","page":"1a0","sub":0,"data":"&lt;base64 of ReGIS commands&gt;","append":false}</code></pre>
+<ul>
+<li><code>data</code> is bare ReGIS commands, not a device control string. At most 262,144 bytes decoded (a dense screen is 20 to 40 KB).</li>
+<li><code>append: false</code> replaces the page's picture; <code>append: true</code> adds commands to it, for animation and live updates. The server keeps the whole stream for the page so that a receiver selecting it later gets the picture from the start.</li>
+<li>The page keeps an ordinary teletext row 0 (header) from a <code>page</code> message so that page numbers, links and sub-pages work as today. The ReGIS picture replaces rows 1 to 24 on receivers that draw it.</li>
+<li>New refusal rules: <code>regis_too_long</code>, <code>regis_bad_byte</code>, <code>regis_limit</code>.</li>
+<li>Changes: a <code>ProgramMessage::Regis</code> variant and <code>MessageType</code> entry (<code>protocol.rs</code>), its reader (<code>protocol/read.rs</code>), its checks (<code>protocol/check.rs</code>), its action (<code>channel.rs</code>, beside <code>send_page</code>), <code>PROTOCOL = 8</code>, <code>protocol/schema-8.json</code>, and the copies of the schema in the TypeScript and Python kits. The kits gain a <code>regis()</code> call.</li>
+</ul>
+
+<h3>3. Checking what a program sends</h3>
+<ol>
+<li><strong>Bytes.</strong> Only printable ASCII, the Latin-1 right half, CR, LF, BS and HT. ESC and the C1 controls are refused, so no control string can hide inside.</li>
+<li><strong>A trial render.</strong> The runtime feeds the stream to a <code>regis::Terminal</code> on a scratch <code>Screen</code>. If the library reports <code>LimitReached</code> the message is refused with <code>regis_limit</code>: a receiver would hit the same limit, and a microcontroller receiver should never be sent work a desktop could barely afford. The trial also produces the picture for the fallback.</li>
+<li><strong>Reports.</strong> <code>Event::Reply</code> and <code>LocatorRequest</code> from the trial are discarded. Nothing a stream asks to be reported is sent anywhere in the first version.</li>
+<li><strong>Waits.</strong> <code>S(T n)</code> is honoured by the receiver, within its own ceiling; the server does not pace.</li>
+</ol>
+<p>The trial render costs CPU on the server: at most the library's work allowance, about 16 million pixel visits plus 256 for each byte, a few tens of milliseconds for a full message. The existing rate limits on program messages apply.</p>
+
+<h3>4. The record</h3>
+<p>Record type 13, <code>REGIS</code>, on data channel 12, in the engine's <code>neoteletext-web/src/records/regis.rs</code> beside the other encoders:</p>
+<table>
+<tr><th>Field</th><th>Size</th><th>Meaning</th></tr>
+<tr><td>page</td><td>2 bytes</td><td>Magazine and page number, as in the LINKS record.</td></tr>
+<tr><td>sub</td><td>2 bytes</td><td>Sub-page.</td></tr>
+<tr><td>generation</td><td>2 bytes</td><td>Changes when the picture is replaced, so a receiver can tell a new picture from more of the old one.</td></tr>
+<tr><td>offset</td><td>4 bytes</td><td>Where in the page's ReGIS stream these bytes begin. Zero with a new generation means "start again on a blank screen".</td></tr>
+<tr><td>bytes</td><td>up to 8,176</td><td>ReGIS commands.</td></tr>
+</table>
+<p>A long stream is cut into several records at any byte: the renderer accepts a stream cut anywhere (<code>tests/streaming.rs</code>). The server sends the records after the page's teletext packets when a connection selects the page, and sends only the new bytes on an <code>append</code>. The per-connection baseline (<code>Shown</code> in <code>channel.rs</code>) gains the generation and offset last sent.</p>
+<p>Wire vectors for the record are added to <code>neoteletext-common/wire-vectors.tsv</code>, copied into the engine, and the server's pin is moved in a commit of its own, as DEVELOPMENT.md section 11 requires.</p>
+
+<h3>5. The fallback</h3>
+<p>For a connection without the capability, the runtime turns the trial render's 800×480 picture into teletext rows 1 to 24 with the engine's <code>neoteletext-image</code> converter and sends them as an ordinary page. The picture is 5:3 and the page area 40×24 cells, so it is letterboxed. An <code>append</code> re-renders and sends changed rows, which the existing changed-rows logic already does.</p>
+
+<h3>6. Dependencies</h3>
+<ul>
+<li><code>regis</code> as a git dependency at one pinned revision, with <code>default-features = false</code>, added to <code>deny.toml</code>'s <code>allow-git</code>. It is <code>no_std</code>, has no dependencies and does no I/O, so it fits the runtime crate and builds for <code>wasm32-unknown-unknown</code> (Cloudflare).</li>
+<li>The font: the server needs one for the fallback picture only. It would be the same font data the browser uses, embedded in the server binary.</li>
+</ul>
+
+<h3>7. Input</h3>
+<p>Pointer and key events already reach programs stamped with the page. A program drawing ReGIS needs pointer positions in picture pixels; the input event's optional pixel position can carry them once the browser plan's mapping is agreed. No server change beyond passing them through.</p>
+
+<h2>Security analysis to write before building</h2>
+<ul>
+<li>The trial render as a CPU and memory cost per program message, and what a hostile or broken program can cost the server.</li>
+<li>The record as a new downstream payload: size, rate, and that an old receiver skips it (a wire vector proves it).</li>
+<li>That no report or reply path exists, so the answerback class of attack cannot occur.</li>
+<li>The fallback path: the converter's cost and its output passing <code>is_valid_stream_packet</code>.</li>
+<li>A fuzz target for the new program message and for the record encoder.</li>
+</ul>
+
+<h2>Order of work</h2>
+<ol>
+<li>Owner's decision: adopt options A and C; amend DEC-1459's record list; allocate record type 13 and capability bit 23. Requirements recorded in rdm for the engine, server, kits and common.</li>
+<li><code>neoteletext-common</code>: PROTOCOL.html sections for the record, the capability and protocol 8; wire-vector rows.</li>
+<li><code>neoteletext-engine</code>: the record encoder and decoder, the capability constant, the wire-vector copy.</li>
+<li><code>neoteletext-app-server</code>: move the engine pin; add the <code>regis</code> pin; the message, checks, trial render, record sending, fallback; schema 8; tests and fuzz targets.</li>
+<li>Kits: schema copies and the <code>regis()</code> call; one demonstration channel.</li>
+<li>Browser: see the browser plan. Until it is done every receiver gets the fallback, so the server side can ship first.</li>
+</ol>
+
+<h2>Questions for the owner</h2>
+<ol>
+<li>Is a mosaic fallback wanted, or should a receiver without ReGIS simply see the page's teletext rows as the program sent them?</li>
+<li>Should a ReGIS page be a page in the ordinary numbering (as proposed), or a separate kind of resource?</li>
+<li>Is 262,144 bytes the right ceiling for one page's stream?</li>
+<li>Should stream replies (<code>R</code> commands) ever reach the program? The proposal says no.</li>
+</ol>
+</main>
+</body>
+</html>

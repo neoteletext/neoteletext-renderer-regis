@@ -1,0 +1,5 @@
+# The same Rust as the NeoTeletext engine, browser and NAPLPS renderer.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

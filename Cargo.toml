@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+# At most three stable releases behind the pinned toolchain (the NeoTeletext
+# family rule, neoteletext-common DEVELOPMENT.md section 13).
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+# No library is used. The renderer, the image writers and the tools are all
+# written here; a library would need the owner's approval by name.
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+allow_attributes_without_reason = "warn"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+# Overflow checks stay off in release builds: with them a wrong bound would
+# abort the embedding process (SOLVEDSECURITYISSUES 005). Debug builds and
+# tests keep them on.

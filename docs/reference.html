@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>neoteletext-regis: reference</title>
+<style>
+:root { --bg: #fbfbfd; --fg: #1c1d24; --muted: #5b5e70; --rule: #d6d8e2; --code-bg: #eeeff5; --accent: #2c3fb8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14151c; --fg: #e4e5ee; --muted: #9a9db2; --rule: #2f3142; --code-bg: #1f2130; --accent: #93a0ff; }
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; }
+main { max-width: 56rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 0.5rem; }
+h2 { font-size: 1.35rem; margin: 2.5rem 0 0.5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.05rem; margin: 1.5rem 0 0.25rem; }
+p, li { max-width: 44rem; }
+a { color: var(--accent); }
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; white-space: nowrap; }
+table { border-collapse: collapse; margin: 0.75rem 0; font-size: 0.93rem; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 0.3rem 0.9rem 0.3rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lede { color: var(--muted); font-size: 1.1rem; }
+nav { font-size: 0.95rem; color: var(--muted); }
+.toc { columns: 2; font-size: 0.95rem; padding-left: 1.2rem; }
+</style>
+</head>
+<body>
+<main>
+<nav><a href="guide.html">Guide</a> · <a href="integration-browser.html">Browser plan</a> · <a href="integration-server.html">Server plan</a></nav>
+<h1>neoteletext-regis: reference</h1>
+<p class="lede">What the renderer accepts and does, command by command. "The manual" is the VT330/VT340 Programmer Reference Manual, Volume 2; chapter numbers are given so each rule can be checked against it.</p>
+<ul class="toc">
+<li><a href="#stream">The stream</a></li><li><a href="#syntax">Syntax</a></li><li><a href="#defaults">Power-up state</a></li>
+<li><a href="#s">S: screen</a></li><li><a href="#w">W: write controls</a></li><li><a href="#p">P: position</a></li>
+<li><a href="#v">V: vector</a></li><li><a href="#c">C: curve</a></li><li><a href="#t">T: text</a></li>
+<li><a href="#l">L: load</a></li><li><a href="#m">@: macrographs</a></li><li><a href="#r">R: report</a></li>
+<li><a href="#f">F: polygon fill</a></li><li><a href="#raster">How shapes become pixels</a></li>
+<li><a href="#limits">Limits</a></li><li><a href="#differences">Differences from a VT340</a></li><li><a href="#accuracy">Measured accuracy</a></li>
+</ul>
+
+<h2 id="stream">The stream</h2>
+<p><code>Terminal::feed</code> reads a terminal data stream (manual chapter 1, "Entering and Exiting ReGIS").</p>
+<table>
+<tr><th>Bytes</th><th>Effect</th></tr>
+<tr><td><code>ESC P p</code> or <code>ESC P 0 p</code></td><td>Enter ReGIS where it was last left, even in the middle of a command.</td></tr>
+<tr><td><code>ESC P 1 p</code></td><td>Enter ReGIS at a new command: an unfinished command is dropped, as by <code>;</code>. The picture and every setting are kept.</td></tr>
+<tr><td><code>ESC P 2 p</code>, <code>ESC P 3 p</code></td><td>As 0 and 1. The command display line is not drawn.</td></tr>
+<tr><td><code>ESC \</code></td><td>Leave ReGIS.</td></tr>
+<tr><td>0x90, 0x9C</td><td>The 8-bit forms of <code>ESC P</code> and <code>ESC \</code>, obeyed only after <code>Terminal::recognise_eight_bit_controls(true)</code>. They are off at first because both bytes occur inside UTF-8 text.</td></tr>
+<tr><td>ESC, CAN (0x18), SUB (0x1A)</td><td>End the string, as on a terminal.</td></tr>
+<tr><td>Any other device control string</td><td>Skipped to its end (sixel, for example).</td></tr>
+<tr><td>Everything outside a string</td><td>Ignored.</td></tr>
+</table>
+<p>Only the first numeric parameter of the introducer is read. <code>Terminal::feed_regis</code> skips all of this and reads commands directly.</p>
+
+<h2 id="syntax">Syntax</h2>
+<table>
+<tr><th>Item</th><th>Rule</th></tr>
+<tr><td>Key letter</td><td>One of <code>S W P V C T L R F</code>, in either case. Arguments that follow belong to it until the next key letter. A new key letter restarts the line pattern and ends temporary write controls.</td></tr>
+<tr><td>Options</td><td>In parentheses, nested as needed: <code>V(W(I(R)))</code>. Nesting deeper than 32 is skipped.</td></tr>
+<tr><td>Extent</td><td><code>[x,y]</code>. Either part may be left out; a part with a sign is relative. A stray character inside the brackets is ignored. A third value sets error 3.</td></tr>
+<tr><td>Number</td><td>Decimal, with optional sign, fraction and power of ten (<code>.1E3</code>). Truncated to an integer and clamped to −32768…32767. An <code>E</code> with no digit after it is an option letter, not an exponent.</td></tr>
+<tr><td>String</td><td>In <code>'…'</code> or <code>"…"</code>; the quote mark doubled stands for itself. At most 1,024 bytes are kept. Only printable characters, CR, LF, BS and HT are kept.</td></tr>
+<tr><td>Pixel vector</td><td>A digit 0 to 7 at command level: one step of the PV multiplier; 0 is right, 2 up, 4 left, 6 down, odd digits the diagonals. Directions are fixed on the screen whatever the addressing.</td></tr>
+<tr><td><code>;</code></td><td>Resynchronise: close everything open, wait for a key letter, clear the error report. Not special inside a string or a macrograph definition.</td></tr>
+<tr><td>Spaces, commas, control characters</td><td>Separate items and otherwise mean nothing outside a string.</td></tr>
+</table>
+
+<h2 id="defaults">Power-up state</h2>
+<p>From manual table 1-2, for the VT340.</p>
+<table>
+<tr><th>Setting</th><th>Value</th></tr>
+<tr><td>Addressing</td><td><code>S(A[0,0][799,479])</code></td></tr>
+<tr><td>Background</td><td><code>S(I0)</code></td></tr>
+<tr><td>Write controls</td><td><code>W(M1, P1(M2), N0, F15, I7, V, S0)</code></td></tr>
+<tr><td>Text</td><td><code>T(A0, S1, D0, I0)</code>: display cell 9×20, unit cell 8×20</td></tr>
+<tr><td>Load set</td><td><code>L(A1)</code></td></tr>
+<tr><td>Colour map</td><td>Manual table 2-3: black, blue, red, green, magenta, cyan, yellow, grey 53%, grey 26%, six paler colours, grey 80%.</td></tr>
+<tr><td>Position, pages</td><td>[0,0]; page 0 drawn on and shown</td></tr>
+</table>
+
+<h2 id="s">S: screen control (manual chapter 2)</h2>
+<table>
+<tr><th>Form</th><th>Effect</th></tr>
+<tr><td><code>S(A[x1,y1][x2,y2])</code></td><td>Display addressing: the corners of the coordinate system. One scale is used for both axes, the largest that keeps the area on the screen, so squares stay square; reversed corners reverse an axis. Both corners must be given in full.</td></tr>
+<tr><td><code>S[x,y]</code>, <code>S&lt;pv&gt;</code></td><td>Scroll: the point named, in the stream's coordinates, becomes the top-left corner; a signed part is measured from the present corner. A pixel vector scrolls by the PV multiplier. What leaves the page is lost; what enters is the background.</td></tr>
+<tr><td><code>S(M n(…) n(…))</code></td><td>Output map location n, 0 to 15. Inside: <code>H</code>, <code>L</code>, <code>S</code> with numbers (hue 0 = blue, 120 = red, 240 = green; lightness and saturation in percent); or one letter of <code>D R G B C Y M W</code>; <code>L</code> alone is a grey. <code>A</code> is accepted and changes nothing, as on a VT340.</td></tr>
+<tr><td><code>S(I n)</code>, <code>S(I(…))</code></td><td>Background: a location, or the location nearest a colour.</td></tr>
+<tr><td><code>S(E)</code></td><td>Erase the page being drawn on to the background. Also turns shading off, stops a curve and empties the position stack.</td></tr>
+<tr><td><code>S(T n)</code></td><td>Time delay: reported as <code>Event::Wait</code>; nothing waits.</td></tr>
+<tr><td><code>S(P n)</code></td><td>Show page 0 or 1.</td></tr>
+<tr><td><code>S(C n)</code></td><td>Cursor off or on: remembered (<code>Terminal::cursor_visible</code>), not drawn. Cursor styles <code>C(H…)</code>, <code>C(I…)</code> are skipped.</td></tr>
+<tr><td><code>S(W(M n))</code></td><td>Temporary PV multiplier for a scroll.</td></tr>
+<tr><td><code>S(H…)</code></td><td>Hard copy: skipped.</td></tr>
+</table>
+
+<h2 id="w">W: write controls (manual chapter 3)</h2>
+<p>As a command the settings last; as an option of another command, <code>V(W(…))</code>, they last until the next key letter, the next temporary option or <code>;</code>.</p>
+<table>
+<tr><th>Form</th><th>Effect</th></tr>
+<tr><td><code>W(M n)</code></td><td>PV multiplier: coordinates moved for each pixel-vector digit.</td></tr>
+<tr><td><code>W(P n)</code></td><td>One digit: standard pattern 0 to 9 (manual table 3-1). Two or more digits: the bits themselves, repeated to fill eight; of more than eight, the last eight.</td></tr>
+<tr><td><code>W(P n(M m))</code></td><td>Pattern multiplier, 1 to 16: pixels drawn for each pattern bit.</td></tr>
+<tr><td><code>W(I n)</code>, <code>W(I(…))</code></td><td>Foreground: a location 0 to 15, or the location nearest a colour.</td></tr>
+<tr><td><code>W(F n)</code></td><td>Plane mask, 0 to 15: only these bits of a pixel change.</td></tr>
+<tr><td><code>W(V)</code></td><td>Overlay: pattern 1-bits write the foreground.</td></tr>
+<tr><td><code>W(R)</code></td><td>Replace: 1-bits write the foreground and 0-bits the background.</td></tr>
+<tr><td><code>W(C)</code></td><td>Complement: 1-bits invert the pixel's bits under the plane mask.</td></tr>
+<tr><td><code>W(E)</code></td><td>Erase: every pixel written takes the background, or with <code>N1</code> the foreground.</td></tr>
+<tr><td><code>W(N n)</code></td><td>Negative: swaps pattern 1-bits and 0-bits.</td></tr>
+<tr><td><code>W(S1)</code>, <code>W(S0)</code></td><td>Shading on (reference line: the row of the current position) and off.</td></tr>
+<tr><td><code>W(S[,y])</code>, <code>W(S(X)[x])</code></td><td>Shading to a horizontal line at y, or a vertical line at x.</td></tr>
+<tr><td><code>W(S'c')</code></td><td>Shading with a character: the top eight rows of its ten-row cell, at the text unit size in force, tiled from the screen's origin.</td></tr>
+</table>
+
+<h2 id="p">P: position (manual chapter 4)</h2>
+<table>
+<tr><th>Form</th><th>Effect</th></tr>
+<tr><td><code>P[x,y]</code>, <code>P&lt;pv&gt;</code></td><td>Move without drawing.</td></tr>
+<tr><td><code>P(B)</code> … <code>(E)</code></td><td>Save the position; <code>(E)</code> returns to it.</td></tr>
+<tr><td><code>P(S)</code> … <code>(E)</code></td><td>Save a placeholder; <code>(E)</code> moves nothing.</td></tr>
+<tr><td><code>P(P n)</code></td><td>Draw on page 0 or 1 from now on.</td></tr>
+<tr><td><code>P(W(M n))</code></td><td>Temporary PV multiplier.</td></tr>
+</table>
+<p>Sixteen positions can be saved, shared with <code>V</code>. A seventeenth save sets error 7; an <code>(E)</code> with nothing saved sets error 8.</p>
+
+<h2 id="v">V: vector (manual chapter 5)</h2>
+<table>
+<tr><th>Form</th><th>Effect</th></tr>
+<tr><td><code>V[x,y]</code>, <code>V&lt;pv&gt;</code></td><td>Draw a line from the current position and move there.</td></tr>
+<tr><td><code>V[]</code></td><td>Draw the single pixel at the current position.</td></tr>
+<tr><td><code>V(B)</code> … <code>(E)</code></td><td>Save the position; <code>(E)</code> draws a line back to it.</td></tr>
+<tr><td><code>V(S)</code> … <code>(E)</code></td><td>Save a placeholder; <code>(E)</code> draws nothing.</td></tr>
+<tr><td><code>V(W(…))</code></td><td>Temporary write controls.</td></tr>
+</table>
+
+<h2 id="c">C: curve (manual chapter 6)</h2>
+<table>
+<tr><th>Form</th><th>Effect</th></tr>
+<tr><td><code>C[x,y]</code>, <code>C&lt;pv&gt;</code></td><td>Circle about the current position through the point. The cursor does not move.</td></tr>
+<tr><td><code>C(C)[x,y]</code></td><td>Circle about the point through the current position.</td></tr>
+<tr><td><code>C(A d)[x,y]</code></td><td>Arc of d degrees about the current position, starting at the point; positive is counterclockwise. The cursor does not move.</td></tr>
+<tr><td><code>C(A d C)[x,y]</code></td><td>Arc about the point, starting at the current position. The cursor ends at the arc's end.</td></tr>
+<tr><td><code>C(S)</code> p… <code>(E)</code></td><td>Open curve through the positions; drawn from the first given to the next to last. <code>[]</code> repeats a position, so one at each end draws the whole curve.</td></tr>
+<tr><td><code>C(B)</code> p… <code>(E)</code></td><td>Closed curve; the cursor returns to the start.</td></tr>
+<tr><td><code>C(W(…))</code></td><td>Temporary write controls.</td></tr>
+</table>
+<p>Angles are rounded to whole degrees and clamped to ±360. <code>(C)</code> and <code>(A)</code> last until the next key letter. A curve is drawn as its points arrive, so one left without <code>(E)</code> still shows.</p>
+
+<h2 id="t">T: text (manual chapter 7)</h2>
+<table>
+<tr><th>Form</th><th>Effect</th></tr>
+<tr><td><code>T'string'</code></td><td>Draw the string. Each character's cell has its top-left at the cursor, which then moves by the spacing. CR returns to where the text command began (moved down by any LF), LF moves down a display cell, BS back a space, HT forward one.</td></tr>
+<tr><td><code>T(A n)</code></td><td>Character set: 0 built in, 1 to 3 loadable. A character the set lacks is a solid block.</td></tr>
+<tr><td><code>T(S n)</code></td><td>Standard size 0 to 16 (manual table 7-3): sets display cell, unit cell and spacing. Out of range sets error 9.</td></tr>
+<tr><td><code>T(S[w,h])</code></td><td>Display cell: the area each character takes.</td></tr>
+<tr><td><code>T(U[w,h])</code></td><td>Unit cell: the size of the shape; width a multiple of 8 and height a multiple of 5, rounded down.</td></tr>
+<tr><td><code>T(H n)</code></td><td>Height multiplier, 1 to 256: both cells become 10n high.</td></tr>
+<tr><td><code>T(M[w,h])</code></td><td>Size multiplier: unit cell 8w by 10h; w at most 16.</td></tr>
+<tr><td><code>T[x,y]</code></td><td>Spacing: the move after each character, in the stream's coordinates.</td></tr>
+<tr><td><code>T(D a)</code></td><td>Tilt, to the nearest 45 degrees. The first in a group of options turns the string and its characters; a second in the same group turns the characters only.</td></tr>
+<tr><td><code>T(I a)</code></td><td>Italic: 0, ±22 or ±45 degrees as in the manual's table; positive leans the top left.</td></tr>
+<tr><td><code>T&lt;pv&gt;</code></td><td>Move half a display cell in that direction, relative to the string&#39;s baseline; half of an odd side rounds towards the top and left, as on a VT340: a nine-pixel cell moves four pixels right, five left.</td></tr>
+<tr><td><code>T(B)</code> … <code>(E)</code></td><td>Save and restore the text controls (sixteen deep).</td></tr>
+<tr><td><code>T(W(…))</code></td><td>Temporary write controls.</td></tr>
+<tr><td><code>T(A0(L"…",R"…"))</code></td><td>Character set designators: accepted and ignored; set 0 is always the supplied font.</td></tr>
+</table>
+<p>In overlay writing only the lit pixels of a character are written; in replace writing the whole display cell is. The line pattern and shading do not apply to text; negative writing does.</p>
+
+<h2 id="l">L: load (manual chapter 8)</h2>
+<table>
+<tr><th>Form</th><th>Effect</th></tr>
+<tr><td><code>L(A n)</code></td><td>Select set 1 to 3 for loading. 0 can be selected but not loaded; other numbers set error 4.</td></tr>
+<tr><td><code>L(A'name')</code></td><td>Name the set: ten characters, printable only, no quote marks.</td></tr>
+<tr><td><code>L'c' hh,hh,…</code></td><td>Load the cell called by character c: one pair of hexadecimal digits a row, top first, up to ten rows; a single digit is the right half of a row. End the cell with <code>;</code>, a new string or a key letter from G to Z (the letters A to F are hexadecimal digits here).</td></tr>
+</table>
+
+<h2 id="m">@: macrographs (manual chapter 9)</h2>
+<table>
+<tr><th>Form</th><th>Effect</th></tr>
+<tr><td><code>@:x … @;</code></td><td>Define macrograph x (a letter, either case). Nothing is drawn. An empty definition clears it.</td></tr>
+<tr><td><code>@x</code></td><td>Insert the macrograph's bytes into the stream; it may supply any part of a command.</td></tr>
+<tr><td><code>@.</code></td><td>Clear all twenty-six.</td></tr>
+</table>
+<p>Macrographs nest sixteen deep; one already running is not started again; inside a running macrograph <code>@:</code> does not begin a definition. <code>@</code> is ordinary text inside a quoted string.</p>
+
+<h2 id="r">R: report (manual chapter 10)</h2>
+<p>Each report is returned as <code>Event::Reply</code>, ending with a carriage return.</p>
+<table>
+<tr><th>Form</th><th>Reply</th></tr>
+<tr><td><code>R(P)</code></td><td><code>[x,y]</code>: the current position in the stream's coordinates.</td></tr>
+<tr><td><code>R(E)</code></td><td><code>"n,m"</code>: the last error code and the character at fault (manual table 10-1). Codes produced: 0, 1, 3, 4, 7, 8, 9.</td></tr>
+<tr><td><code>R(L)</code></td><td><code>A'name'</code>: the name of the set selected for loading.</td></tr>
+<tr><td><code>R(M(=))</code></td><td><code>"free,total"</code> bytes of macrograph storage.</td></tr>
+<tr><td><code>R(M(x))</code></td><td><code>@=x</code>, the contents, <code>@;</code>. The contents are left out unless <code>Terminal::allow_macrograph_reports(true)</code> was called, and then only their printable characters are sent.</td></tr>
+<tr><td><code>R(I)</code>, <code>R(I n)</code></td><td>An empty line. No input cursor is shown.</td></tr>
+<tr><td><code>R(P(I))</code></td><td>No reply: <code>Event::LocatorRequest</code> is returned for the caller to answer.</td></tr>
+</table>
+
+<h2 id="f">F: polygon fill (manual chapter 11)</h2>
+<p><code>F(…)</code> holds <code>V</code>, <code>C</code>, <code>P</code> and <code>W</code> commands. Nothing inside is drawn as lines; instead each vector's end, each <code>V[]</code>, and each point of an arc, circle or curve becomes a vertex. At the closing parenthesis the polygon is filled and the cursor returns to where it was before the fill. <code>P</code> moves add no vertex. Write controls set inside the fill apply to the whole fill and end with it. Fewer than three vertices draw nothing; up to 4,096 are kept.</p>
+
+<h2 id="raster">How shapes become pixels</h2>
+<table>
+<tr><th>Shape</th><th>Rule</th></tr>
+<tr><td>Line</td><td>An integer line from the first pixel to the last, both drawn. Each pixel takes the next pattern bit. A vector that continues from the pixel the last one ended on, within one command, does not draw that pixel twice.</td></tr>
+<tr><td>Arc, circle</td><td>The starting point is turned about the centre one degree at a time and the points joined by lines ("the VT300 draws arcs in 1 degree increments").</td></tr>
+<tr><td>Curve</td><td>A Catmull-Rom spline, four points at a time, in straight pieces about six pixels long. The manual gives the properties of the curve but not its equation; this spline has those properties.</td></tr>
+<tr><td>Shading</td><td>Each point drawn becomes a run of pixels to the reference line, both ends included. The pattern is read down the screen, one bit to a row.</td></tr>
+<tr><td>Fill</td><td>The even-odd rule along each pixel row, plus the outline, each pixel written once. The pattern is read down the screen as for shading.</td></tr>
+<tr><td>Text</td><td>The stored shape is stretched over the unit cell by repeating pixels. At 45-degree tilts each step along the character is one diagonal pixel step, which stretches it as the manual describes.</td></tr>
+<tr><td>Clipping</td><td>Anything off the 800 by 480 page is not drawn; nothing wraps.</td></tr>
+</table>
+
+<h2 id="limits">Limits</h2>
+<p>All in <code>regis::limits</code>. Past a limit the input is ignored or cut short, never an error.</p>
+<table>
+<tr><th>Limit</th><th>Value</th><th>Past it</th></tr>
+<tr><td>Coordinates</td><td class="n">−32,768 … 32,767</td><td>Clamped</td></tr>
+<tr><td>Parenthesis nesting</td><td class="n">32</td><td>Deeper levels skipped</td></tr>
+<tr><td>String</td><td class="n">1,024 bytes</td><td>Rest dropped</td></tr>
+<tr><td>Extent text</td><td class="n">64 bytes</td><td>Rest dropped</td></tr>
+<tr><td>Saved positions</td><td class="n">16</td><td>Error 7</td></tr>
+<tr><td>Saved text controls</td><td class="n">16</td><td>Save ignored</td></tr>
+<tr><td>Macrograph storage</td><td class="n">16,384 bytes in all</td><td>The definition is dropped</td></tr>
+<tr><td>Macrograph nesting</td><td class="n">16</td><td>Invocation ignored</td></tr>
+<tr><td>Fill vertices</td><td class="n">4,096</td><td>Rest ignored</td></tr>
+<tr><td>Character cell side</td><td class="n">2,560 pixels</td><td>Clamped</td></tr>
+<tr><td>Work allowance</td><td class="n">16,000,000 units saved up; 256 earned for each byte fed</td><td>Drawing skipped; <code>LimitReached</code></td></tr>
+<tr><td>Events in one call</td><td class="n">1,024</td><td>Dropped; <code>LimitReached</code></td></tr>
+<tr><td>Reply bytes</td><td class="n">4,096 saved up; 1 earned for each byte fed</td><td>Reply dropped; <code>LimitReached</code></td></tr>
+<tr><td>Delay</td><td class="n">3,600 ticks (one minute) saved up; 1 earned for each byte fed</td><td>Cut; <code>LimitReached</code></td></tr>
+<tr><td>Font text</td><td class="n">1 MiB</td><td><code>Error::FontTooLong</code></td></tr>
+</table>
+<p>A work unit is one pixel visited. Lines, shading, fills, text cells, erasing and scrolling all pay; an arc pays 4 units a degree; each byte run out of a macrograph costs 64 units. The budgets are credited byte by byte, so a stream is treated the same however it is divided between calls. If the allowance runs out inside a macrograph, the rest of it is dropped and the parser starts afresh at the next command.</p>
+
+<h2 id="differences">Differences from a VT340</h2>
+<table>
+<tr><th>Area</th><th>This renderer</th></tr>
+<tr><td>Built-in characters</td><td>Come from the font the caller supplies. The shipped <code>vt340.regisfont</code> holds the VT340's own shapes, from its character generator ROM. Only one built-in set: designators for other sets are ignored.</td></tr>
+<tr><td>Command display mode</td><td>Not drawn (<code>ESC P 2 p</code>, <code>3 p</code>).</td></tr>
+<tr><td>Graphics cursors, input modes, locator</td><td>Not drawn or read; the caller is told (<code>cursor_visible</code>, <code>LocatorRequest</code>).</td></tr>
+<tr><td>Hard copy</td><td>Skipped.</td></tr>
+<tr><td>Time delay</td><td>Reported, within the delay budget; nothing waits.</td></tr>
+<tr><td>Macrograph report</td><td>Contents withheld unless allowed; printable characters only.</td></tr>
+<tr><td>8-bit controls</td><td>0x90 and 0x9C are ordinary bytes unless asked for.</td></tr>
+<tr><td>Fill vertices</td><td>4,096, where the VT340 keeps 256.</td></tr>
+<tr><td>Macrograph storage</td><td>16,384 bytes, where the VT340 has "at least 10,000".</td></tr>
+<tr><td>Colour map</td><td>Colours are kept as whole percentages, not the VT340's sixteen levels a primary. The power-up values are the manual's table; a real VT340 reports slightly darker greys.</td></tr>
+<tr><td>Monochrome map</td><td>None: there is one map, as the manual says of the VT340.</td></tr>
+<tr><td>Text mixed with graphics</td><td>There is no text screen; only ReGIS is drawn.</td></tr>
+<tr><td>Circle edges</td><td>Within a pixel of the VT340's, not identical.</td></tr>
+</table>
+
+<h2 id="accuracy">Measured accuracy</h2>
+<p>Against screen captures from a real VT340 (<code>crates/regis/tests/hardware.rs</code>), counting pixels lit in one and dark in the other:</p>
+<table>
+<tr><th>Test</th><th>Pixels differing</th><th>Cause</th></tr>
+<tr><td>Checkerboard of 375 filled squares</td><td class="n">0</td><td></td></tr>
+<tr><td>Signal flag: polygons of position moves and dots</td><td class="n">0</td><td></td></tr>
+<tr><td>Grid of dashed lines with labels</td><td class="n">0</td><td>Lines, upright and turned labels, and a half-cell move.</td></tr>
+<tr><td>Three shaded circles</td><td class="n">272 of 384,000</td><td>Circle edges.</td></tr>
+</table>
+</main>
+</body>
+</html>

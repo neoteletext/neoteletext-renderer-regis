@@ -1,0 +1,11 @@
+[package]
+name = "regis"
+version = "0.1.0"
+description = "DEC ReGIS renderer: bytes in, colour-map addresses on a caller's screen out; no_std, no input or output"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

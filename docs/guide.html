@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>neoteletext-regis: guide</title>
+<style>
+:root { --bg: #fbfbfd; --fg: #1c1d24; --muted: #5b5e70; --rule: #d6d8e2; --code-bg: #eeeff5; --accent: #2c3fb8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14151c; --fg: #e4e5ee; --muted: #9a9db2; --rule: #2f3142; --code-bg: #1f2130; --accent: #93a0ff; }
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; }
+main { max-width: 46rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 0.5rem; }
+h2 { font-size: 1.35rem; margin: 2.5rem 0 0.5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.05rem; margin: 1.5rem 0 0.25rem; }
+p, li { max-width: 42rem; }
+a { color: var(--accent); }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
+code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }
+pre { background: var(--code-bg); padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; line-height: 1.45; }
+pre code { background: none; padding: 0; }
+figure { margin: 1rem 0; }
+figure img { width: 100%; height: auto; image-rendering: pixelated; border: 1px solid var(--rule); background: #000; display: block; }
+figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 0.3rem; }
+table { border-collapse: collapse; margin: 0.75rem 0; font-size: 0.95rem; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 0.3rem 0.9rem 0.3rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.lede { color: var(--muted); font-size: 1.1rem; }
+nav { font-size: 0.95rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<nav><a href="reference.html">Reference</a> · <a href="integration-browser.html">Browser plan</a> · <a href="integration-server.html">Server plan</a></nav>
+<h1>neoteletext-regis: a guide</h1>
+<p class="lede">A renderer for DEC ReGIS, the vector graphics language of the VT340 terminal. This guide shows how to draw with ReGIS, how to call the library from Rust, and how to use the command-line tool.</p>
+
+<h2 id="what">What it is</h2>
+<p>ReGIS (Remote Graphics Instruction Set) is a text language. A program sends short commands such as <code>P[100,100]V[200,200]</code> and the terminal draws them. The renderer plays the part of the terminal: it reads the commands and produces the picture.</p>
+<ul>
+<li>The screen is <strong>800 by 480 pixels</strong> with <strong>sixteen colours</strong>, as on a VT340.</li>
+<li>The library, <code>regis</code>, is written from scratch in Rust. It uses no other crate, needs no operating system (<code>no_std</code> with <code>alloc</code>), does no input or output, and uses no floating point, so the same bytes give the same pixels everywhere.</li>
+<li>The tool, <code>regis-render</code>, turns a ReGIS file into a PNG or PPM picture.</li>
+<li>It follows the <em>VT330/VT340 Programmer Reference Manual, Volume 2</em>, and is checked against screen captures from a real VT340.</li>
+</ul>
+
+<h2 id="tool">The command-line tool</h2>
+<pre><code>cargo build --release
+target/release/regis-render picture.regis picture.png</code></pre>
+<table>
+<tr><th>Argument</th><th>Meaning</th></tr>
+<tr><td><code>--font FILE</code></td><td>The shapes of the built-in characters, in place of the VT340 font compiled into the tool.</td></tr>
+<tr><td><code>--page 0|1</code></td><td>Write this graphics page instead of the one the stream left on show.</td></tr>
+<tr><td><code>--macrograph-reports</code></td><td>Let <code>R(M(letter))</code> report a macrograph's contents (off otherwise).</td></tr>
+<tr><td><code>INPUT</code></td><td>A file of ReGIS. If it holds a device control string (<code>ESC P p … ESC \</code>) it is read as a terminal would read it; otherwise the whole file is taken as commands.</td></tr>
+<tr><td><code>OUTPUT</code></td><td>A name ending <code>.ppm</code> writes a binary PPM; anything else writes a PNG.</td></tr>
+</table>
+<p>Replies the stream asks for (see <a href="#events">events</a>) are printed on standard error. The PNG is not compressed; <code>tools/compress_png.py</code> shrinks one in place.</p>
+
+<h2 id="drawing">Drawing with ReGIS</h2>
+<p>Each command is a letter followed by arguments. Positions are written in brackets, options in parentheses, text in quotes. Letters may be in either case, and spaces and line breaks between items mean nothing. <code>[0,0]</code> is the top-left corner and y grows downward.</p>
+
+<h3>Lines</h3>
+<p><code>P</code> moves without drawing; <code>V</code> draws a line to each position given. A position can be absolute <code>[200,100]</code>, relative <code>[+50,-20]</code>, or leave a coordinate out to keep it. A digit from 0 to 7 outside brackets is a <em>pixel vector</em>: one step in one of eight directions, 0 to the right and counting counterclockwise.</p>
+<pre><code>W(I3) P[60,60] V[340,60][340,200][60,200][60,60]
+W(I6,P2) P[60,240] V[340,240]
+W(I2) P[460,130] V(W(M70)) 0246</code></pre>
+<figure><img src="images/lines.png" alt="A rectangle, three patterned lines and two stars of pixel vectors" width="800" height="480"><figcaption>docs/examples/lines.regis</figcaption></figure>
+
+<h3>Circles, arcs and curves</h3>
+<p><code>C[+90]</code> draws a circle about the current position through the point given. <code>C(A180)[+90]</code> draws an arc of 180 degrees, counterclockwise for a positive angle. <code>C(C)</code> means the bracket gives the centre instead. <code>C(S)…(E)</code> draws a smooth open curve through points, and <code>C(B)…(E)</code> a closed one.</p>
+<figure><img src="images/circles.png" alt="Concentric circles, arcs and a wavy curve" width="800" height="480"><figcaption>docs/examples/circles.regis</figcaption></figure>
+
+<h3>Filling and shading</h3>
+<p><code>F(…)</code> fills the figure that the vector and curve commands inside it trace. <code>W(S1)</code> switches shading on: everything drawn is filled down (or up) to a reference line. <code>W(S'#')</code> shades with a character.</p>
+<pre><code>W(I2) P[80,80] F(V(B)[+140][,+140][-140](E))
+W(I3) P[400,150] F(C[+75])
+W(I6) P[80,300] W(S1) V[150,260][220,330][290,270][360,300] W(S0)</code></pre>
+<figure><img src="images/fills.png" alt="A filled square, circle and rounded box, a shaded zigzag and a circle shaded with a character" width="800" height="480"><figcaption>docs/examples/fills.regis</figcaption></figure>
+
+<h3>Text</h3>
+<p><code>T'string'</code> draws text with its top-left corner at the current position. <code>T(S2)</code> picks one of seventeen sizes, <code>T(D90)</code> tilts the string in steps of 45 degrees, <code>T(I22)</code> slants it, and a pixel-vector digit between strings shifts by half a character for subscripts and superscripts.</p>
+<figure><img src="images/text.png" alt="Text at several sizes, slanted, tilted, with subscripts and in reverse" width="800" height="480"><figcaption>docs/examples/text.regis</figcaption></figure>
+
+<h3>Colour</h3>
+<p>A pixel holds a number from 0 to 15, and the <em>output map</em> gives each number its colour. <code>W(I5)</code> draws in colour 5; <code>S(I0)</code> sets the background; <code>S(M5(H120L50S100))</code> changes what colour 5 looks like, for everything already drawn in it too. Hues follow DEC's wheel: 0 is blue, 120 red, 240 green.</p>
+<figure><img src="images/colours.png" alt="The sixteen default colours and three overlapping circles mixing by bit plane" width="800" height="480"><figcaption>docs/examples/colours.regis</figcaption></figure>
+
+<h3>Bigger pictures</h3>
+<figure><img src="images/galaxy.png" alt="A dense star map interface" width="800" height="480"><figcaption>docs/examples/galaxy.regis: 36 KB of ReGIS</figcaption></figure>
+<figure><img src="images/surface.png" alt="A shaded three-dimensional surface plot" width="800" height="480"><figcaption>docs/examples/surface.regis: 1,296 filled polygons</figcaption></figure>
+<p>Run <code>docs/examples/build.sh</code> to render every example again.</p>
+
+<h2 id="library">Using the library</h2>
+<pre><code>use regis::{Event, Font, Screen, Terminal};
+
+let mut screen = Screen::new();          // two pages of 800 x 480, owned by you
+let mut terminal = Terminal::new();      // everything else ReGIS remembers
+terminal.set_font(Font::parse(&amp;std::fs::read_to_string("fonts/vt340.regisfont")?)?);
+
+// Feed bytes as they arrive, in pieces of any size.
+for event in terminal.feed(&amp;mut screen, b"\x1bPpP[100,100]V[200,200]\x1b\\") {
+    match event {
+        Event::Wait(ticks) =&gt; { /* the stream asked for a pause: 60 ticks to the second */ }
+        Event::Reply(bytes) =&gt; { /* an answer for the sender of the stream */ }
+        Event::LocatorRequest =&gt; { /* the stream asked where the pointer is */ }
+        Event::LimitReached =&gt; { /* some input was not drawn */ }
+        _ =&gt; { /* the enum may grow */ }
+    }
+}
+terminal.finish(&amp;mut screen);            // at the end of the input
+
+let page = screen.displayed();           // &amp;Canvas
+let colours = terminal.palette().colours();   // [[u8; 3]; 16]
+for (index, pixel) in page.pixels().iter().enumerate() {
+    let [red, green, blue] = colours[usize::from(*pixel)];
+    // index % 800 is x, index / 800 is y
+}</code></pre>
+<table>
+<tr><th>Call</th><th>What it does</th></tr>
+<tr><td><code>Terminal::feed</code></td><td>Reads a terminal data stream: ReGIS is taken from device control strings and everything else is ignored.</td></tr>
+<tr><td><code>Terminal::feed_regis</code></td><td>Reads bare ReGIS commands, with no control string around them.</td></tr>
+<tr><td><code>Terminal::finish</code></td><td>Ends the input, so a number or string waiting for its last byte is acted on.</td></tr>
+<tr><td><code>Terminal::set_font</code></td><td>Supplies the built-in characters. The library compiles none in.</td></tr>
+<tr><td><code>Terminal::recognise_eight_bit_controls</code></td><td>Also obey the single bytes 0x90 and 0x9C as the start and end of a control string. Leave it off for UTF-8 streams.</td></tr>
+<tr><td><code>Terminal::allow_macrograph_reports</code></td><td>Let a stream read back the macrographs it defined.</td></tr>
+<tr><td><code>Terminal::palette</code></td><td>The sixteen colours, to turn pixel values into red, green and blue.</td></tr>
+<tr><td><code>Terminal::position</code>, <code>cursor_visible</code></td><td>Where the graphics cursor is and whether the stream switched it on; the library does not draw it.</td></tr>
+<tr><td><code>Screen::displayed</code>, <code>page</code></td><td>The page on show, or either page by number.</td></tr>
+<tr><td><code>Canvas::pixels</code>, <code>pixel</code></td><td>The pixels, one byte each from 0 to 15, row by row from the top-left.</td></tr>
+</table>
+<p>A terminal keeps its state between calls, as a real one does between control strings: position, colours, macrographs and loaded characters all carry on. Use a new <code>Terminal</code> and <code>Screen</code> for each unrelated picture.</p>
+
+<h3 id="events">Events</h3>
+<p>The library never waits and never sends anything. It tells the caller what the stream asked for:</p>
+<ul>
+<li><strong><code>Wait</code></strong> comes from <code>S(T n)</code>. Treat it as advice: a stream can ask for a minute, plus one tick for each byte it sends, and a caller showing pictures to a user should set its own ceiling.</li>
+<li><strong><code>Reply</code></strong> is the answer to a report command such as <code>R(P)</code>. Send it only to the program that produced the stream, never to anything that would treat it as typed input. Replies never outweigh the input by more than 4,096 bytes.</li>
+<li><strong><code>LimitReached</code></strong> means a bound in <a href="reference.html#limits">the limits</a> stopped some drawing. The terminal stays usable.</li>
+</ul>
+
+<h2 id="fonts">Fonts</h2>
+<p>The manual does not give the shapes of the VT340's characters, so the caller supplies them as text. The repository ships two fonts and one loadable set:</p>
+<table>
+<tr><th>File</th><th>What it is</th></tr>
+<tr><td><code>fonts/vt340.regisfont</code></td><td>Read from the VT340's character generator ROM by <code>tools/rom_to_regisfont.py</code>: its own ReGIS characters for 0x20–0x7E, both strikes, and for 0xA0–0xFF its text characters less their first and last columns, which is how the terminal draws them in ReGIS. The tests and <code>regis-render</code> use this one.</td></tr>
+<tr><td><code>fonts/vwsvt0.regisfont</code></td><td>DEC's VWSVT0 terminal font, narrowed to eight pixels by <code>tools/bdf_to_regisfont.py</code>. Close to the VT340's shapes but not the same.</td></tr>
+<tr><td><code>fonts/loadable/greek.regis</code></td><td>A Greek alphabet as ReGIS load commands for set 1. Send it in the stream, then select it with <code>T(A1)</code>.</td></tr>
+</table>
+<p>A font file holds one or two <em>strikes</em>:</p>
+<pre><code># a comment
+[strike 20]
+41 00 00 00 00 18 3C 66 66 66 7E 66 66 66 66 66 00 00 00 00 00
+[strike 10]
+41 00 18 3C 66 7E 66 66 66 00 00</code></pre>
+<p>Each glyph line is the character's code and then one byte for each row, top first, all in two-digit hexadecimal; the left pixel is the high bit. The ten-row strike is the stored cell the manual describes. The twenty-row strike is used when the text cell's height is a multiple of twenty, because a VT340 draws size-1 text from twenty distinct rows.</p>
+
+<h2 id="safety">Safety</h2>
+<p>ReGIS arrives from a network, so the library treats it as hostile:</p>
+<ul>
+<li>It cannot panic on input: indexing, unwrapping and unchecked arithmetic are denied by the compiler settings, and thousands of random pages are fed to it by the tests.</li>
+<li>Its work is bounded. Every pixel visited is paid for from an allowance that grows with the bytes received, so a short stream cannot buy unbounded drawing, and the result is the same however the stream is divided between calls.</li>
+<li>Its memory is bounded: every buffer has a limit in <code>regis::limits</code>.</li>
+<li>Reports that could leak or inject (macrograph contents, character-set names) are off or cleaned, and the 8-bit control bytes that occur inside UTF-8 text are not obeyed unless asked for.</li>
+</ul>
+<p>The issues found and fixed are written up in <code>SOLVEDSECURITYISSUES/</code>.</p>
+
+<h2 id="develop">Working on it</h2>
+<pre><code>scripts/check.sh commit   # formatting, lint lists, Clippy
+scripts/check.sh push     # plus every test
+scripts/check.sh full     # plus docs, release tests, the long random run, the font check</code></pre>
+<p>The tests in <code>crates/regis/tests</code> are grouped by command, with <code>hardware.rs</code> comparing against VT340 captures, <code>streaming.rs</code> checking that a stream may be cut anywhere, <code>robustness.rs</code> feeding hostile input, and <code>security.rs</code> holding a regression test for each solved issue.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>neoteletext-regis: plan for the browser</title>
+<style>
+:root { --bg: #fbfbfd; --fg: #1c1d24; --muted: #5b5e70; --rule: #d6d8e2; --code-bg: #eeeff5; --accent: #2c3fb8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14151c; --fg: #e4e5ee; --muted: #9a9db2; --rule: #2f3142; --code-bg: #1f2130; --accent: #93a0ff; }
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; }
+main { max-width: 46rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 0.5rem; }
+h2 { font-size: 1.35rem; margin: 2.5rem 0 0.5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.05rem; margin: 1.5rem 0 0.25rem; }
+p, li { max-width: 42rem; }
+a { color: var(--accent); }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
+code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }
+pre { background: var(--code-bg); padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; line-height: 1.45; }
+pre code { background: none; padding: 0; }
+figure { margin: 1rem 0; }
+figure img { width: 100%; height: auto; image-rendering: pixelated; border: 1px solid var(--rule); background: #000; display: block; }
+figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 0.3rem; }
+table { border-collapse: collapse; margin: 0.75rem 0; font-size: 0.95rem; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 0.3rem 0.9rem 0.3rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.lede { color: var(--muted); font-size: 1.1rem; }
+nav { font-size: 0.95rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<nav><a href="guide.html">Guide</a> · <a href="reference.html">Reference</a> · <a href="integration-server.html">Server plan</a></nav>
+<h1>Plan: ReGIS in the NeoTeletext browser</h1>
+<p class="lede">A proposal for showing ReGIS pages in the native browser (<code>neoteletext-browser</code>). Nothing here is built. It was written on 14 November 2026 from a reading of the browser at commit <code>526e695</code> and its architecture document, and it depends on the <a href="integration-server.html">server plan</a> for how ReGIS arrives.</p>
+
+<h2>What the browser does today</h2>
+<ul>
+<li><strong>Processes.</strong> A fetcher per web channel reads the network; the trusted core passes bytes on unread; a decoder per channel, with no rights, parses them with the teletext engine and renders; the interface process draws frames and parses no outside data.</li>
+<li><strong>One picture shape.</strong> The decoder calls the engine's <code>render_screen</code> into 480×500 palette indices of at most 32 colours. The frame message (<code>protocol/src/frame.rs</code>) rejects any image that is not exactly 480×500, and a message is at most 256 KB. The size 40×25 cells of 12×20 dots is a constant in <code>interface-core/src/canvas.rs</code>, the frame reader, the painter, the input bounds and the decoder's buffers.</li>
+<li><strong>One format.</strong> Records DEC-1762, REQ-4437, REQ-5350 and REQ-722 say the browser opens T42 and TTI only and that other readers "MUST NOT be compiled into the browser's decoder"; a test asserts it. REQ-1645 and REQ-5558 say a page is drawn in 40×25 at every level. NAPLPS is not in the browser either.</li>
+<li><strong>Input.</strong> A pointer position is a page cell and a dot within the 480×500 image, never a screen coordinate; the event type already has an optional pixel pair.</li>
+<li><strong>Time.</strong> At most one frame per 20 ms field. Flash is done by the decoder rendering again; the interface has no clock for pictures.</li>
+<li><strong>Rules.</strong> The engine is a git dependency at one pinned revision; every library needs approval by name; every reader of outside input has a fuzz target and a security document; untrusted bytes are parsed only in rightless processes.</li>
+</ul>
+
+<h2>Design</h2>
+<h3>1. Where the renderer runs</h3>
+<p>In the decoder process, beside the engine. It already holds the channel's bytes, has no rights, and is the only place outside data is parsed. <code>regis</code> is added as a git dependency at one pinned revision (and to <code>deny.toml</code>'s <code>allow-git</code>). It is <code>no_std</code>, has no dependencies, no unsafe code and no I/O, which is what the decoder's rules ask of the engine.</p>
+
+<h3>2. How a page becomes a ReGIS page</h3>
+<p>Never by guessing from the bytes. A page is ReGIS when the decoder has received ReGIS records for it (record type 13 in the server plan). The engine decodes the record frame; the decoder keeps, for each page and sub-page, a <code>regis::Terminal</code>, a <code>regis::Screen</code>, the generation and the offset reached, and feeds each record's bytes as they arrive. A new generation starts a new terminal and a blank screen. The browser announces capability <code>REGIS</code> in HELLO.</p>
+<p>For static channels, a file <code>NNN.regis</code> beside <code>NNN.tti</code> would be the same stream in a file; that is a second step and needs its own media type decision.</p>
+
+<h3>3. A frame with a shape</h3>
+<p>The frame message gains a shape: teletext (480×500) or ReGIS (800×480). The reader checks the image against the size its shape names, instead of one constant.</p>
+<ul>
+<li><strong>Size.</strong> A raw ReGIS frame is 384,000 bytes, over the 256 KB message limit. The frame format already has run-length and changed-area forms; a ReGIS picture is mostly flat colour, so runs are far smaller (the densest sample here is under 40 KB). A frame that still does not fit is sent as bands in several messages. The limit itself is not raised.</li>
+<li><strong>Colours.</strong> Sixteen, within the existing limit of 32. The palette comes from <code>Terminal::palette()</code> with each frame, so a colour-map change (<code>S(M…)</code>) is a palette change and no pixel is resent, as with teletext flash.</li>
+<li><strong>Changes.</strong> The decoder compares the new screen with the last one sent and sends changed rows, as it does for teletext.</li>
+</ul>
+
+<h3>4. Drawing it</h3>
+<p>The painter keeps a pixmap per page; for a ReGIS page it is 800×480. Two ways to place it:</p>
+<table>
+<tr><th>Option</th><th>Placement</th><th>Verdict</th></tr>
+<tr><td>A</td><td>Inside the same page rectangle a teletext page gets, scaled evenly and centred, the remainder filled with colour 0 of the picture's map.</td><td><strong>Recommended.</strong> Window layout, tabs and chrome do not change with the kind of page; REQ-1645's "predictable screen resolution" holds for the window.</td></tr>
+<tr><td>B</td><td>The page area takes the picture's own 5:3 shape.</td><td>The window would change shape between pages.</td></tr>
+</table>
+<p>A VT340's pixels are close to square, so the picture is shown 5:3 with nearest-neighbour scaling, as teletext pages are. Row 0 of the teletext page (the header) stays above the picture, drawn by the engine as now; the picture takes the area of rows 1 to 24.</p>
+
+<h3>5. Time</h3>
+<p><code>Event::Wait</code> from the renderer pauses that page's feeding: the decoder stops feeding bytes, renders a frame, and asks the core for a wake-up after the wait, exactly as it does for flash. Ceilings: the library allows a minute a call; the decoder adds its own per-page ceiling (proposed: 10 seconds a wait, and animation stops when the page is not selected). Frames stay at one a field at most.</p>
+
+<h3>6. Input</h3>
+<p>For a ReGIS page the pointer event carries the pixel pair in picture coordinates, 0 to 799 and 0 to 479, in the field the event already has; the cell and dot are derived from them (cell width 20, height 480/24 = 20) so that programs written for cells keep working. The trusted core's check that the dot lies in its cell is extended to the picture's cell size. This needs a line in the input protocol document and wire vectors.</p>
+
+<h3>7. What is not done</h3>
+<ul>
+<li><strong>Replies.</strong> <code>Event::Reply</code> and <code>LocatorRequest</code> are dropped in the decoder. A ReGIS stream can make the browser send nothing.</li>
+<li><strong>Macrograph reports</strong> stay off.</li>
+<li><strong>The graphics cursor</strong> is not drawn; the browser's own pointer is the cursor.</li>
+<li><strong>Fonts.</strong> One font file is embedded in the decoder, the same data the server uses for its fallback. Whether the VT340 ROM font or DEC's VWSVT0 may be shipped needs the owner's decision; the engine allows only Noto Teletext to be compiled in (DEC-1761), so the alternative is an original font drawn for the purpose.</li>
+</ul>
+
+<h2>Records to change first</h2>
+<ul>
+<li>A decision that the browser draws ReGIS, amending DEC-1762, REQ-4437, REQ-5350 and REQ-722 (formats the decoder may read) and the test in <code>native/decoder/src/engine/tests.rs</code> that asserts only two formats.</li>
+<li>A decision on placement (section 4) against REQ-1645 and REQ-5558.</li>
+<li>Requirements for the frame shape, the size rule, the wait ceiling, the input mapping and the dropped replies.</li>
+<li>A <code>regis-security.md</code> for the feature, as each feature has, and a fuzz target feeding the record path into the renderer.</li>
+</ul>
+
+<h2>Order of work</h2>
+<ol>
+<li>The server plan's steps 1 to 3 (decision, protocol document, engine record decoder).</li>
+<li>Browser records and the security document.</li>
+<li><code>protocol</code>: the frame shape and its reader; fuzz target.</li>
+<li><code>decoder</code>: the <code>regis</code> pin, per-page terminals, record feeding, frames, waits.</li>
+<li><code>interface-core</code>, <code>draw-vello</code>, <code>draw-embedded</code>: the second pixmap size and placement.</li>
+<li>Input mapping in <code>protocol</code>, the trusted core and the input document.</li>
+<li>Golden tests: a set of ReGIS pages rendered through the whole pipe, compared by checksum as the teletext rasters are.</li>
+</ol>
+
+<h2>Questions for the owner</h2>
+<ol>
+<li>Placement A or B?</li>
+<li>Which font may be shipped?</li>
+<li>Should NAPLPS take the same route (a record type, a frame shape) so the three renderers share one mechanism? The frame-shape change proposed here is written to allow it.</li>
+<li>Is a per-wait ceiling of 10 seconds right?</li>
+</ol>
+</main>
+</body>
+</html>

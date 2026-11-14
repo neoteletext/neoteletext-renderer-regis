@@ -1,0 +1,7 @@
+S(I0,E)
+@:BF(V[+44][,+60][-44][,-60])P[+48]@;
+P[16,40]W(I0)@BW(I1)@BW(I2)@BW(I3)@BW(I4)@BW(I5)@BW(I6)@BW(I7)@BW(I8)@BW(I9)@BW(I10)@BW(I11)@BW(I12)@BW(I13)@BW(I14)@BW(I15)@B
+W(I7)P[16,115]T(S1)'The sixteen default colours, 0 to 15'
+W(I7)P[16,150]T'S(M n(H h L l S s)) sets a colour: hue 0 is blue, 120 red, 240 green'
+W(I15,F1)P[300,300]W(S1)C[+80]W(S0)W(I15,F2)P[370,370]W(S1)C[+80]W(S0)W(I15,F4)P[440,300]W(S1)C[+80]W(S0)W(F15)
+W(I7)P[16,200]T'W(F n) writes only some bit planes, so overlapping shapes mix'

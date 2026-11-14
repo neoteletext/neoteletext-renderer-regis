@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReGIS application platform: proposal</title>
+<style>
+:root { --bg: #fbfbfd; --fg: #1c1d24; --muted: #5b5e70; --rule: #d6d8e2; --code-bg: #eeeff5; --accent: #2c3fb8; --note-bg: #f1f3fb; --warn-bg: #fbf3e8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14151c; --fg: #e4e5ee; --muted: #9a9db2; --rule: #2f3142; --code-bg: #1f2130; --accent: #93a0ff; --note-bg: #1c1f30; --warn-bg: #2a2218; }
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; }
+main { max-width: 48rem; margin: 0 auto; padding: 2rem 1rem 5rem; }
+h1 { font-size: 2.1rem; line-height: 1.2; margin: 0 0 0.5rem; }
+h2 { font-size: 1.45rem; margin: 3rem 0 0.5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.1rem; margin: 1.75rem 0 0.25rem; }
+h4 { font-size: 1rem; margin: 1.25rem 0 0.25rem; }
+p, li { max-width: 44rem; }
+a { color: var(--accent); }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; }
+code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }
+pre { background: var(--code-bg); padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; line-height: 1.45; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; margin: 0.75rem 0 1.25rem; font-size: 0.93rem; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 0.35rem 0.9rem 0.35rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+.lede { color: var(--muted); font-size: 1.12rem; }
+.note { background: var(--note-bg); border-left: 3px solid var(--accent); padding: 0.6rem 1rem; margin: 1rem 0; border-radius: 0 6px 6px 0; }
+.warn { background: var(--warn-bg); border-left: 3px solid #c58a2a; padding: 0.6rem 1rem; margin: 1rem 0; border-radius: 0 6px 6px 0; }
+.toc { columns: 2; column-gap: 2rem; font-size: 0.95rem; padding-left: 1.2rem; }
+.toc li { break-inside: avoid; }
+@media (max-width: 40rem) { .toc { columns: 1; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>A ReGIS application platform</h1>
+<p class="lede">A proposal for building interactive applications on the NeoTeletext ReGIS renderer: an extended client
+that keeps the picture as a retained structure of named objects, and a Rust server that manages client connections
+over websockets, exposes a strongly typed API, carries all the universal logic, and runs application code written in
+TypeScript, Python or any other language. This document gives the background, the research the design rests on,
+every part of the design, the problems it must solve and how it solves them, and what remains to be decided.</p>
+
+<div class="note"><strong>Status.</strong> A design proposal; none of the platform described here is built. Figures
+marked <em>measured</em> come from the existing renderer and the test corpus. Figures marked <em>estimated</em> are
+reasoned from the renderer's behaviour and must be confirmed by a prototype. This revision replaces an earlier version
+that kept the client as a plain VT340 ReGIS terminal and put all the intelligence in the server; section
+<a href="#earlier">33</a> explains what changed and why.</div>
+
+<h2 id="contents">Contents</h2>
+<ol class="toc">
+<li><a href="#purpose">Purpose and scope</a></li>
+<li><a href="#principles">Governing decisions</a></li>
+<li><a href="#regis">Background: what ReGIS is</a></li>
+<li><a href="#constraints">The constraints of plain ReGIS</a></li>
+<li><a href="#modes">The writing modes</a></li>
+<li><a href="#history">How ReGIS was programmed originally</a></li>
+<li><a href="#research">What the research shows</a></li>
+<li><a href="#synthesis">The synthesis: a retained display file</a></li>
+<li><a href="#requirements">Requirements</a></li>
+<li><a href="#architecture">Architecture overview</a></li>
+<li><a href="#client">The client: the display file</a></li>
+<li><a href="#objects">Objects, masters and instances</a></li>
+<li><a href="#structure">Depth, hierarchy and transforms</a></li>
+<li><a href="#viewports">Viewports and masks</a></li>
+<li><a href="#repaint">Damage repaint in the client</a></li>
+<li><a href="#transactions">Transactions and editing</a></li>
+<li><a href="#special">Text and series objects</a></li>
+<li><a href="#input">Input: picking, hit shapes, interest, highlight</a></li>
+<li><a href="#limits">Limits</a></li>
+<li><a href="#wire">The wire format</a></li>
+<li><a href="#server">The server</a></li>
+<li><a href="#api">The strongly typed API</a></li>
+<li><a href="#apps">Applications and the application protocol</a></li>
+<li><a href="#styles">Programming styles</a></li>
+<li><a href="#events">Events from client to application</a></li>
+<li><a href="#loop">The update loop</a></li>
+<li><a href="#size">Keeping pictures small</a></li>
+<li><a href="#examples">Worked examples</a></li>
+<li><a href="#strategy">A strategy game, turn by turn</a></li>
+<li><a href="#action">Fast action games</a></li>
+<li><a href="#cost">Memory and computation</a></li>
+<li><a href="#security">Security</a></li>
+<li><a href="#earlier">The earlier design, and why it changed</a></li>
+<li><a href="#problems">Problems and how they are addressed</a></li>
+<li><a href="#excluded">Excluded on purpose</a></li>
+<li><a href="#decisions">Decisions needed</a></li>
+<li><a href="#plan">Implementation plan</a></li>
+<li><a href="#testing">Testing</a></li>
+<li><a href="#glossary">Glossary</a></li>
+<li><a href="#sources">Sources</a></li>
+</ol>
+
+<h2 id="purpose">1. Purpose and scope</h2>
+<p>NeoTeletext has a renderer for ReGIS, the vector graphics language of Digital Equipment Corporation's VT340
+terminal. It is a Rust library with no dependencies that takes ReGIS bytes and draws them on an 800 by 480 screen of
+sixteen colours exactly as the terminal did, hardened against hostile input. Around it are a command-line renderer, a
+compact painting encoder that makes detailed pictures small, and a minifier that rewrites ReGIS shorter without
+changing what it draws.</p>
+<p>A renderer displays pictures. To build applications on it, such as industrial dashboards, trading screens,
+strategy games, maps and forms, something must turn what users do and what data arrives into changes on screen,
+efficiently and reliably, over a network. This document proposes that something: a platform made of an extended
+client renderer and a server.</p>
+<p>The platform has five fixed requirements:</p>
+<ol>
+<li>A <strong>Rust server</strong> manages the client renderers, which connect to it over <strong>websockets</strong>.</li>
+<li>The server exposes a <strong>very strongly typed API</strong>.</li>
+<li><strong>Universal logic is built into the server</strong>: everything that is the same for every application is written once, in Rust.</li>
+<li><strong>Application logic is written in TypeScript, Python or any other language.</strong></li>
+<li><strong>Keypresses, mouse events and touch events</strong> travel from the client through the server to application code.</li>
+</ol>
+<p>Out of scope: the design of particular applications, the client's own surrounding user interface, and the
+NeoTeletext broadcast path that carries ReGIS inside teletext data records.</p>
+
+<h2 id="principles">2. Governing decisions</h2>
+<p>These decisions were made deliberately and shape everything that follows.</p>
+<ul>
+<li><strong>We control the platform, end to end.</strong> The client renderer is ours, and it will be extended freely.
+There is no capability negotiation and <strong>no fallback</strong> to plain VT340 ReGIS for other displays. Compatibility
+with real VT340 terminals or other ReGIS implementations is not a goal.</li>
+<li><strong>Limits suit this platform, not vintage hardware.</strong> Every new feature is bounded, generously, to
+protect the client from a faulty server, not to imitate a 1987 terminal.</li>
+<li><strong>No session-resumption machinery in the client.</strong> No sequence acknowledgements, state hashes or
+resynchronisation protocol. A client that reconnects is sent its whole picture again.</li>
+<li><strong>No raster images, ever.</strong> Everything on screen is drawn from vector commands.</li>
+<li><strong>No local animation.</strong> Nothing moves or changes on screen unless the server sends a change.</li>
+<li><strong>No separate text layer or font system.</strong> Text is ReGIS text, in ReGIS's own and loadable character sets.</li>
+<li><strong>Applications implement behaviours such as scrolling themselves,</strong> using the primitives the platform provides.</li>
+<li><strong>No copied code.</strong> Everything is written for this project; outside work informs the design only.</li>
+</ul>
+
+<h2 id="regis">3. Background: what ReGIS is</h2>
+<p>ReGIS, the Remote Graphics Instruction Set, was introduced by DEC in the early 1980s for its graphics terminals,
+the VT125, VT240 and VT241, and the VT330 and VT340. A host computer sent plain text commands such as
+<code>P[100,200]V[300,200]</code> (move to a point, draw a line to another) and the terminal drew them. The VT340
+displayed 800 by 480 pixels in sixteen colours chosen from a palette of 4,096.</p>
+<p>The language has commands for position (<code>P</code>), vectors (<code>V</code>), curves, circles and arcs
+(<code>C</code>), polygon fill (<code>F</code>), text (<code>T</code>), write controls (<code>W</code>: colour, line
+pattern, writing mode, plane mask, shading), screen control (<code>S</code>: erase, colour map, scrolling, pages),
+loadable character sets (<code>L</code>), macrographs (<code>@</code>, stored command sequences) and reports
+(<code>R</code>). The renderer implements all of it, following DEC's programmer reference manual and checked against
+screen captures from a real VT340: three of four reference pictures match pixel for pixel, and the fourth differs only
+along the edges of circles.</p>
+
+<h2 id="constraints">4. The constraints of plain ReGIS</h2>
+<p>Plain ReGIS has six properties that make applications hard to build. The platform exists largely to remove them.</p>
+<h3>4.1 It remembers nothing</h3>
+<p>Every command ends as pixels in the screen's memory. The terminal keeps no record of which command drew which
+pixel and no list of objects.</p>
+<h3>4.2 Nothing can be removed</h3>
+<p>Because nothing is remembered, nothing can be deleted. To make something disappear, a program must draw over it
+with whatever should be there, which means knowing what was underneath.</p>
+<h3>4.3 The screen is pixels, not cells</h3>
+<p>Unlike a character terminal, ReGIS has no grid. Changing part of the screen has no natural unit, and the cost of a
+change depends on what lies there.</p>
+<h3>4.4 There is no clipping</h3>
+<p>ReGIS cannot restrict drawing to a rectangle. A shape drawn to repair one area draws all of itself.</p>
+<h3>4.5 Scrolling moves the whole screen</h3>
+<p>The scroll command moves the entire picture; a list inside a panel cannot be scrolled.</p>
+<h3>4.6 Input is request and reply</h3>
+<p>The terminal reports the pointer only when asked, and reports coordinates, never what was pointed at.</p>
+<h3>4.7 Bytes are the cost of everything</h3>
+<p>Early paintings made for the test corpus with a naive method were 5 to 11 MB of ReGIS each; made carefully they
+are 30 to 150 KB (<em>measured</em>). Every byte crosses the network.</p>
+
+<h2 id="modes">5. The writing modes</h2>
+<p>ReGIS's own tools for working within these limits are its writing modes, set with <code>W</code>:</p>
+<table>
+<tr><th>Mode</th><th>Command</th><th>Effect</th><th>Use for removal</th></tr>
+<tr><td>Overlay</td><td><code>W(V)</code></td><td>Draws the foreground where the line pattern is on; the default</td><td>None</td></tr>
+<tr><td>Replace</td><td><code>W(R)</code></td><td>Draws foreground where the pattern is on and background where it is off</td><td>Replace-mode text clears its own cell</td></tr>
+<tr><td>Complement</td><td><code>W(C)</code></td><td>Inverts the colour bits of every pixel covered</td><td>Drawing the same thing again restores the picture exactly</td></tr>
+<tr><td>Erase</td><td><code>W(E)</code></td><td>Draws in the background colour</td><td>Rubs a shape out, cleanly only on a plain background</td></tr>
+</table>
+<p>Two related controls: the <strong>negative pattern</strong> <code>W(N1)</code> inverts the line pattern, and the
+<strong>plane mask</strong> <code>W(F…)</code> restricts drawing to chosen bit planes. Complement within one plane flips
+only that plane's bit, giving a predictable colour and exact removal.</p>
+<p>In plain ReGIS these modes are essential workarounds. In the platform proposed here, removal is handled by retained
+objects, so the modes return to being drawing styles: replace mode for dither fills and replace-mode text, complement
+for deliberate inversion effects. They remain fully available inside objects.</p>
+
+<h2 id="history">6. How ReGIS was programmed originally</h2>
+<p>Programs on VAX and PDP-11 computers printed ReGIS command strings built with string formatting in FORTRAN, BASIC,
+Pascal or C, or used graphics libraries with ReGIS output drivers, such as implementations of GKS. At 9,600 or 19,200
+baud, programmers developed a craft of economy: draw static parts once and update only changing values, erase by
+drawing over, define repeated symbols as macrographs, animate and highlight through the colour map, draw cursors in
+complement mode, and use the second page for flicker-free updates. Input was request and reply; the program worked out
+what had been pointed at from its own records. In effect the programmer was the system that remembered the screen and
+computed the smallest change. The platform moves that memory into the client, where it belongs.</p>
+
+<h2 id="research">7. What the research shows</h2>
+<p>The design rests on sixty years of systems that sent graphics to a display device, often over a slow link. Their
+lessons converge.</p>
+
+<h3>7.1 Display files and display processors (1963 to the 1970s)</h3>
+<p>Ivan Sutherland's Sketchpad (1963) kept a <em>display file</em>, the picture as data separate from the screen, and
+introduced <strong>masters and instances</strong>: a drawing defined once as a master and placed many times as
+instances, so that changing the master changed every instance. Sketchpad's display file also recorded, for each
+displayed spot, the address of the element responsible for it, so the program always knew what was where. Vector
+display processors such as Evans and Sutherland's LDS-1 (1969) and later Picture System ran from a display list, a
+program of drawing instructions with subroutine calls for repeated symbols. Their display files were organised into
+segments that could be double-buffered, so that the old version of a segment stayed visible until the new one was
+complete. <strong>Lesson:</strong> keep the picture as structured data, named objects, masters and instances, wherever
+it is drawn, and change it by editing the data; update each object atomically.</p>
+
+<h3>7.2 Graphics standards and terminals: GKS, PHIGS, Tektronix</h3>
+<p>The GKS standard and Tektronix's raster terminals of the 1980s (the 4105, 4107 and 4115) kept named
+<em>segments</em>: groups of drawing commands with attributes for visibility, highlighting, detectability for picking,
+display priority and transformation. The terminal or library redrew whatever a change exposed, and could report which
+segment the user pointed at. PHIGS added hierarchical <em>structures</em>: structures calling structures, with
+transforms inherited. <strong>Lesson:</strong> the useful operations on retained objects are well known (create,
+delete, show, hide, move, transform, priority, highlight, pick), and hierarchy with inherited attributes keeps complex
+scenes manageable.</p>
+
+<h3>7.3 Overlapping windows: Pike's layers and the Blit (1983 to 1984)</h3>
+<p>Rob Pike's layers gave each program its own overlapping region on a bitmap terminal, with drawing fully isolated
+from other programs even where regions overlapped. The Blit terminal could also load programs from the host and run
+them locally. <strong>Lesson:</strong> clipping each region to its own window, in its own coordinates, is what makes
+independent regions safe. Downloading code to the display is a step this platform does not take.</p>
+
+<h3>7.4 The X Window System: from hints to compositing</h3>
+<p>X offered <em>backing store</em> and <em>save-unders</em> (keeping obscured pixels so they could be restored) as
+hints a server could ignore; applications always had to redraw when told a region was exposed. The X.Org server later
+dropped these features in favour of compositing: each window renders off screen, a <em>damage</em> extension reports
+what changed, and a compositor assembles the screen. X's Render extension took its compositing model from Plan 9's
+draw device and its operators from Porter and Duff's 1984 algebra. A Silicon Graphics note compared overlay planes
+with save-unders: overlay planes avoid damage to underlying windows in hardware at little cost, while save-unders and
+backing store carry heavy software overhead. <strong>Lesson:</strong> saving pixels under things was a stopgap the
+field abandoned; retained structure with damage tracking won.</p>
+
+<h3>7.5 Plan 9's draw device</h3>
+<p>Plan 9's display device holds resources in its own storage, referenced by numeric ids that clients allocate and
+draw into, and composites them with a chosen operator. <strong>Lesson:</strong> a client-held store of numbered
+resources, referenced by small ids chosen by the program, is simple and efficient.</p>
+
+<h3>7.6 Thin-client research (1999 to 2005)</h3>
+<p>SLIM, the Sun Ray protocol studied at Stanford and Sun (SOSP 1999), used a small set of low-level 2D primitives
+pushed from the server to a minimal console. THINC (Columbia, SOSP 2005), inspired by SLIM, used a few simple
+primitives (raw, copy, solid fill, pattern fill, bitmap) and added offscreen drawing awareness and command buffering
+and scheduling. Microsoft's RDP sends drawing orders and keeps client-side caches referenced by index: glyphs, brushes,
+bitmaps and offscreen surfaces. <strong>Lessons:</strong> caches of reusable things referenced by id save enormous
+bandwidth; coalescing updates before sending matters. These systems leaned on raster copies because they mirrored
+desktops of pixels; a platform that controls its own content does better with retained vector objects.</p>
+
+<h3>7.7 Flash and SWF</h3>
+<p>Macromedia Flash's SWF format kept a dictionary of shapes defined once by id and a display list of instances at
+explicit depths; each frame placed, modified and removed instances, and the player redrew dirty regions.
+ActionScript 3 exposed the display list as a typed tree with DOM-style events. <strong>Lesson:</strong> the retained
+model again, proven at internet scale, with depth as the ordering primitive. Flash also shows the cost of a client
+that runs code: its player was a notorious security problem.</p>
+
+<h3>7.8 Hardware sprites</h3>
+<p>The home computers of the 1980s drew sprites in video hardware over the background at a position, never writing
+them into the background, so moving a sprite needed no erasing. <strong>Lesson:</strong> objects composited rather
+than burned into the picture never need undoing.</p>
+
+<h3>7.9 Curses and modern terminal libraries</h3>
+<p>The curses library (about 1980) kept a record of what the terminal showed and computed the cheapest update on
+each refresh. Modern libraries (Ratatui, Bubble Tea, Textual, Ink, notcurses) keep a double-buffered cell grid with a
+diff underneath and offer immediate-mode, Elm-style, retained-widget or React-style models above it, and many use the
+terminal's synchronized-output mode so frames are atomic. <strong>Lesson:</strong> applications may describe whole
+screens freely when something underneath computes the difference; every cause of change can be a message; frames
+should be atomic.</p>
+
+<h3>7.10 Live server user interfaces</h3>
+<p>React and Elm describe interfaces as functions of state; live server interfaces such as Phoenix LiveView keep a
+session per connection, re-render on events and send diffs to a browser. <strong>Lesson:</strong> the server-held
+session with event-driven updates is a proven shape for networked interactive applications.</p>
+
+<h2 id="synthesis">8. The synthesis: a retained display file</h2>
+<p>Across sixty years one answer recurs: <strong>keep the picture as a retained, structured set of named objects in
+the display device, and let the device redraw damage itself.</strong> Masters and instances, hierarchy, depth,
+visibility, picking, atomic updates and caches by id all follow from it. The pixel-level answers (bitmap layers,
+save-unders, rectangle copies) were stopgaps or artefacts of mirroring pixel desktops.</p>
+<p>Because the platform controls both ends, it can take the object answer directly. The client renderer keeps a
+<strong>display file</strong>: every object, its contents in ReGIS, its depth, place in a hierarchy and attributes.
+When anything changes, the client repaints the damaged area from the display file, clipping internally, which its own
+rasteriser can do even though ReGIS never exposed clipping. Every constraint in section 4 disappears:</p>
+<table>
+<tr><th>Constraint of plain ReGIS</th><th>Removed by</th></tr>
+<tr><td>Remembers nothing</td><td>The display file</td></tr>
+<tr><td>Nothing can be removed</td><td>Delete and hide objects; the client repaints</td></tr>
+<tr><td>Pixels, not cells</td><td>Objects are the unit of change</td></tr>
+<tr><td>No clipping</td><td>Viewports and masks; internal clipping during repaint</td></tr>
+<tr><td>Scrolling moves the whole screen</td><td>Viewport offsets, set by the application</td></tr>
+<tr><td>Input is request and reply, by coordinates</td><td>Events pushed by the client, naming the object picked</td></tr>
+<tr><td>Bytes are the cost of everything</td><td>Masters and instances, edits in place, series objects</td></tr>
+</table>
+
+<h2 id="requirements">9. Requirements</h2>
+<h3>9.1 Functional</h3>
+<ol>
+<li>Clients connect to the Rust server over websockets and are associated with application sessions.</li>
+<li>Each client's screen always shows its application's current view.</li>
+<li>Only changes are sent: object definitions, edits, attribute changes, deletions.</li>
+<li>Applications describe and change screens through a strongly typed API.</li>
+<li>Applications are written in TypeScript, Python or any language speaking the protocol.</li>
+<li>Keys, mouse and touch reach applications as typed events naming the object concerned.</li>
+<li>Applications may change screens at any time, not only in response to input.</li>
+<li>A client that reconnects receives its whole picture again.</li>
+</ol>
+<h3>9.2 Non-functional</h3>
+<ol>
+<li><strong>Determinism:</strong> the client draws a given display file identically every time, on every build.</li>
+<li><strong>Economy:</strong> interactive changes cost tens of bytes; the platform never resends what the client holds.</li>
+<li><strong>Isolation:</strong> a faulty application cannot crash the server or harm a client.</li>
+<li><strong>Safety:</strong> client and server treat their inputs as untrusted and bound every allocation.</li>
+<li><strong>Scalability:</strong> tens of thousands of sessions per server.</li>
+<li><strong>Latency:</strong> processing on server and client well under the network round trip.</li>
+</ol>
+
+<h2 id="architecture">10. Architecture overview</h2>
+<pre>
+  CLIENT RENDERER                      RUST SERVER                                APPLICATION
+  (browser or native)                                                             (TypeScript, Python, any)
+                          websocket                          local socket
+  display file    &lt;--- object operations ---   +-----------------------+   &lt;--- transactions of typed operations ---
+  damage repaint  ---- events: object picked -&gt; |  per session:         |   ---- events: key, pointer, touch -----&gt;
+  ReGIS rasteriser                              |   display-file mirror |   ---- session opened / closed --------&gt;
+                                                |   validation, limits  |
+                                                |   id allocation       |
+                                                |   event routing       |
+                                                |   coalescing          |
+                                                +-----------------------+
+</pre>
+<p><strong>The client</strong> holds the display file, rasterises it with the existing renderer, repaints damage,
+picks objects under the pointer, and sends input events. It contains no application logic and runs no animation.</p>
+<p><strong>The server</strong> holds, per session, a mirror of the client's display file (objects only, no pixels),
+validates and limits everything, allocates ids, routes events, coalesces changes, and translates the typed API into
+client operations.</p>
+<p><strong>The application</strong> is an ordinary program that receives typed events and responds with typed
+operations. It never sees ReGIS or the websocket.</p>
+<p>One interaction:</p>
+<ol>
+<li>The user taps a button. The client finds the topmost detectable object under the touch and sends an event naming it.</li>
+<li>The server validates the event, resolves the object id to the application's name for it, and forwards a typed event.</li>
+<li>The application updates its state and replies with a transaction: for example, set the button's highlight, replace a text object's string, append a point to a series.</li>
+<li>The server validates the transaction, applies it to its mirror, and sends the equivalent client operations in one message.</li>
+<li>The client applies them atomically and repaints the damage once.</li>
+</ol>
+
+<h2 id="client">11. The client: the display file</h2>
+<p>The display file is the client's retained model of the screen. It holds masters (definitions, never displayed
+directly), objects (things displayed: drawings, instances of masters, groups, viewports, text and series objects),
+and for each object its depth, parent, transform, attributes and contents. The screen is always the display file,
+rasterised.</p>
+<p>The client's job is narrow and exact:</p>
+<ul>
+<li>apply operations to the display file atomically, in transactions;</li>
+<li>repaint the damage each transaction causes;</li>
+<li>pick the object under the pointer and send events the server has asked for;</li>
+<li>enforce the limits.</li>
+</ul>
+<p>It never decides anything about the application. Determinism is essential: the same display file must produce the
+same pixels on every build of the client, which is what conformance tests check.</p>
+
+<h2 id="objects">12. Objects, masters and instances</h2>
+<h3>12.1 Named objects</h3>
+<p>An object is opened by id, filled with ordinary ReGIS drawing commands, and closed. Ids are small integers
+allocated by the server. Operations: create, delete, rename (change id), and redefine (replace contents, section 16).
+Inside an object, all of ReGIS is available, including the writing modes, loadable character sets and macrographs.</p>
+<h3>12.2 Masters</h3>
+<p>A master is a definition, never drawn itself. It holds ReGIS drawing commands in its own local coordinates.
+Redefining a master changes every instance of it. Masters are the platform's cache of reusable shapes: a star glyph,
+a ship, a valve symbol, a button, an emblem.</p>
+<h3>12.3 Instances</h3>
+<p>An instance places a master in the display file, with its own position, transform, depth, attributes and colour
+remap. Hundreds of identical markers cost one master and a few bytes each.</p>
+<h3>12.4 Colour remapping per instance</h3>
+<p>An instance may map its master's palette indices to others. One ship master drawn in eight faction colours; one
+button master in normal, pressed and disabled colours; one valve symbol in running, stopped and fault colours.
+Colour remapping makes state changes a single attribute change.</p>
+
+<h2 id="structure">13. Depth, hierarchy and transforms</h2>
+<h3>13.1 Depth</h3>
+<p>Every object has an explicit depth within its parent: later depth draws over earlier. Objects can be inserted at
+a depth, raised and lowered. Drawing order is data, not history, as in SWF and GKS.</p>
+<h3>13.2 Hierarchy</h3>
+<p>Groups contain objects and other groups. Position, visibility, colour remapping and highlight are inherited.
+Moving a group moves everything in it; hiding it hides everything in it. Hierarchy depth is limited (section 19).</p>
+<h3>13.3 Transforms</h3>
+<p>Transforms are exact on the pixel grid: translation by integers, scaling by integer factors, mirroring, and turns
+in 90-degree steps. These keep rendering deterministic and identical across builds. Arbitrary rotation and
+fractional scaling are excluded because they lose exactness; they can be considered later if a real need appears.</p>
+<h3>13.4 Visibility</h3>
+<p>Every object can be shown or hidden. Hiding repaints what lies beneath; showing repaints the object. Combined with
+depth, visibility replaces every use the earlier design had for erasing.</p>
+
+<h2 id="viewports">14. Viewports and masks</h2>
+<h3>14.1 Viewports</h3>
+<p>A viewport is a group with a clip rectangle on the screen and an inner coordinate offset. Its children are drawn in
+the viewport's own coordinates, shifted by the offset and clipped to the rectangle. Panels, lists, map views,
+documents and dialogs are viewports. This is GKS's viewport and Pike's layer, in retained form.</p>
+<p><strong>Scrolling is implemented by the application</strong>: it changes the viewport's offset, one small
+operation, and the client repaints the viewport's area from the display file. For long lists the application adds and
+removes child objects as they come into and leave view; the platform does not scroll by itself and does not animate.</p>
+<h3>14.2 Masks</h3>
+<p>An object may serve as a clipping shape for a group: its children are drawn only inside the mask's filled area. A
+round gauge face, a porthole, a map region. Masks are on-or-off clipping, the useful part of Porter and Duff's "in"
+operation; sixteen indexed colours have no transparency to blend.</p>
+
+<h2 id="repaint">15. Damage repaint in the client</h2>
+<p>When a transaction changes the display file, the client works out the damaged area: the old and new bounds of every
+changed object, transformed and clipped by their ancestors. It then redraws only the objects intersecting that area,
+in depth order, with drawing clipped internally to the damage. Damage is tracked as a set of rectangles, merged when
+they overlap or when merging is cheaper.</p>
+<p>This is invisible in the protocol and is what makes the whole model cheap: deleting, hiding, moving, recolouring and
+redefining objects all cost only the area they affect. It also replaces every pixel-level technique of the earlier
+design: there are no shadow pixels on the server, no replay with transitive closure, no overlay planes and no save-unders.</p>
+<p>Internal clipping is exact: the rasteriser decides per pixel whether a pixel lies in the damage before writing it,
+so an object redrawn inside a damaged rectangle produces exactly the pixels it would produce in a full redraw. Patterns,
+dither tiles and text cells are anchored to the screen as they are now, so partial redraws match full ones.</p>
+<p>Repaint cost is bounded per transaction (section 19); a transaction that would exceed it is rejected by the server
+before it is sent, because the server computes the same damage from its mirror.</p>
+
+<h2 id="transactions">16. Transactions and editing</h2>
+<h3>16.1 Transactions</h3>
+<p>Operations arrive in transactions: begin, a batch of operations, commit. The client applies the whole batch to the
+display file and repaints once at commit. No partly applied state is ever shown. This replaces page flipping for
+updates and gives the effect of the double-buffered segments of the display processors.</p>
+<h3>16.2 Edit in place</h3>
+<p>Redefining an object replaces its contents atomically while keeping its id, depth, parent, transform, attributes
+and children. Changing a gauge's needle, a button's label or a chart's axis is a redefine, never an erase and redraw.</p>
+
+<h2 id="special">17. Text and series objects</h2>
+<h3>17.1 Text objects</h3>
+<p>A text object holds a string, a position, a ReGIS text size and direction, a character set and a colour. "Set
+string" replaces the string; the client handles clearing and redrawing through damage repaint. This is ReGIS text
+made retained, not a new font system: the characters are those of the built-in and loadable sets.</p>
+<h3>17.2 Series objects</h3>
+<p>A series object is a polyline with operations to append a point, drop the oldest point, and replace a point, plus a
+line pattern and colour. Trend lines, charts, sensor traces, price histories and fleet routes update by a point at a
+time. For dashboards this is the single largest saving: a moving trend costs a few bytes per sample instead of a
+redrawn chart.</p>
+
+<h2 id="input">18. Input: picking, hit shapes, interest, highlight</h2>
+<h3>18.1 Pushed events</h3>
+<p>The client sends input as it happens: keys with modifiers, pointer movement, presses and releases, wheel movement,
+and touch points. Pointer movement is coalesced to a rate the server sets.</p>
+<h3>18.2 Picking by object</h3>
+<p>Objects carry a "detectable" attribute. Every pointer and touch event reports the topmost detectable object under
+it, the path through the hierarchy to it, and the position in that object's local coordinates. Applications never do
+geometry.</p>
+<h3>18.3 Hit shapes</h3>
+<p>An object may declare a hit area separate from its drawing, for example a padded rectangle around a small target,
+so touch works on small screens without changing the drawing.</p>
+<h3>18.4 Event interest</h3>
+<p>Each object declares which events it wants: press, release, click, drag, hover enter and leave, key focus. The
+client sends only those, keeping input traffic small. This is filtering and routing only; nothing visual happens
+without the server.</p>
+<h3>18.5 Highlight</h3>
+<p>The server can set a "highlighted" or "selected" attribute on any object. The client renders it as a predefined
+colour remap or outline. It is a state the server sets with one small operation, not something the client animates.</p>
+<h3>18.6 Gestures</h3>
+<p>Gesture recognition (tap, double tap, long press, drag, swipe, pinch) is done once, in the server, from the raw
+touch points the client sends, and delivered to applications as typed events. Keeping it in the server keeps the
+client simple and the behaviour identical for every application.</p>
+
+<h2 id="limits">19. Limits</h2>
+<p>Limits protect the client from a faulty or compromised server. They are set for this platform's capabilities, not
+a 1987 terminal's. Initial proposals, to be tuned by measurement:</p>
+<table>
+<tr><th>Limit</th><th>Proposed value</th></tr>
+<tr><td>Objects in a display file</td><td>65,536</td></tr>
+<tr><td>Masters</td><td>4,096</td></tr>
+<tr><td>Total display-file size</td><td>16 MB</td></tr>
+<tr><td>Hierarchy depth</td><td>32</td></tr>
+<tr><td>Vertices per polygon</td><td>4,096 (the renderer's current fill limit)</td></tr>
+<tr><td>Points per series object</td><td>16,384</td></tr>
+<tr><td>Text object length</td><td>4,096 characters</td></tr>
+<tr><td>Operations per transaction</td><td>65,536</td></tr>
+<tr><td>Repaint area per transaction</td><td>Bounded in pixel-work units, generous enough for several full-screen repaints</td></tr>
+<tr><td>Message size</td><td>16 MB</td></tr>
+</table>
+<p>The renderer's current per-byte work allowance, designed for hostile streams on a terminal line, is replaced for
+platform connections by these structural limits. The server enforces the same limits on its mirror, so a transaction
+that would break them is rejected before it reaches the client.</p>
+
+<h2 id="wire">20. The wire format</h2>
+<p>Messages from server to client are transactions of object operations; the contents of objects are ReGIS. The
+operations themselves need their own compact binary encoding, framed in websocket binary messages. A sketch of the
+operation set:</p>
+<table>
+<tr><th>Operation</th><th>Fields</th></tr>
+<tr><td><code>Begin</code> / <code>Commit</code></td><td>transaction number</td></tr>
+<tr><td><code>DefineMaster</code></td><td>id, ReGIS contents</td></tr>
+<tr><td><code>Create</code></td><td>id, kind (drawing, instance, group, viewport, text, series), parent, depth, initial attributes, contents</td></tr>
+<tr><td><code>Redefine</code></td><td>id, new contents</td></tr>
+<tr><td><code>Delete</code></td><td>id</td></tr>
+<tr><td><code>SetAttributes</code></td><td>id, any of: position, transform, visibility, colour remap, highlight, detectable, hit shape, event interest, depth</td></tr>
+<tr><td><code>SetViewport</code></td><td>id, clip rectangle, offset</td></tr>
+<tr><td><code>SetMask</code></td><td>group id, mask object id</td></tr>
+<tr><td><code>SetText</code></td><td>id, string</td></tr>
+<tr><td><code>SeriesAppend</code> / <code>SeriesDrop</code> / <code>SeriesSet</code></td><td>id, points</td></tr>
+<tr><td><code>SetPalette</code></td><td>entries and colours</td></tr>
+<tr><td><code>Reset</code></td><td>clears the display file (used on reconnect before resending)</td></tr>
+</table>
+<p>From client to server: <code>Hello</code> (renderer version and session token), input events (with picked object,
+path and local position), and <code>Resize</code> (the display stays 800 by 480 logical pixels; this informs touch
+target sizing). The renderer version must match the server's; a mismatch is a deployment error, not a negotiation.</p>
+
+<h2 id="server">21. The server</h2>
+<h3>21.1 What it holds per session</h3>
+<ul>
+<li>A <strong>mirror of the client's display file</strong>: objects, masters, attributes and contents, no pixels.</li>
+<li>The mapping between the application's names for objects ("fleet:7", "button:end-turn") and the client's integer ids.</li>
+<li>Gesture recognition state, focus, hover state and event interest.</li>
+<li>Pending transactions not yet sent.</li>
+</ul>
+<h3>21.2 What it does for every application</h3>
+<ul>
+<li>Validates every transaction against the types and limits, and against the mirror (ids exist, parents valid, depths in range).</li>
+<li>Computes each transaction's damage and repaint cost from the mirror, and rejects transactions over the limits before sending.</li>
+<li>Coalesces transactions that arrive faster than the client can take them: consecutive attribute changes to the same object merge; an object created and deleted before sending is never sent.</li>
+<li>Manages masters: deduplicates identical drawings submitted as separate objects into a master with instances.</li>
+<li>Routes events: resolves picked ids to application names, recognises gestures, manages focus and hover, and forwards only what the application asked for.</li>
+<li>On reconnect, sends <code>Reset</code> and the whole display file from the mirror; the application does nothing.</li>
+<li>Reports each transaction's cost back to the application.</li>
+</ul>
+<h3>21.3 One task per session</h3>
+<p>Each session is owned by a single asynchronous task holding its state and receiving work through a channel. No
+locks; updates are ordered.</p>
+<h3>21.4 Why the server stays simple</h3>
+<p>Because the client keeps the picture and repaints damage, the server never needs the client's pixels, never
+replays drawing commands, and never verifies by rendering. Its mirror is the client's display file, which is small.
+Correctness rests on the client's deterministic interpretation of the display file, tested by conformance tests, not
+on per-update verification.</p>
+
+<h2 id="api">22. The strongly typed API</h2>
+<h3>22.1 One schema, three languages</h3>
+<p>The node kinds, attributes, operations and events are defined once, in Rust, and a schema generated from them
+produces types for TypeScript and Python. The three cannot drift apart; server and SDKs are built from the same
+version.</p>
+<h3>22.2 Invalid drawing is unrepresentable</h3>
+<ul>
+<li>Palette indices are a type with values 0 to 15.</li>
+<li>Points are on-screen or object-local points with checked ranges.</li>
+<li>Text is validated: characters from the selected set only.</li>
+<li>Sizes, directions, line patterns, writing modes and transforms are enumerations of what is supported.</li>
+<li>Tiles for loadable character sets are exactly ten rows of eight bits.</li>
+<li>Object contents are built through a typed drawing builder, not raw ReGIS.</li>
+</ul>
+<h3>22.3 The Rust types (illustrative)</h3>
+<pre><code>pub struct PaletteIndex(u8);                     // 0..=15, made only by a checked constructor
+pub struct Point { x: i16, y: i16 }              // object-local; ranges checked on construction
+pub struct Name(String);                         // the application's name: "fleet:7", "button:end-turn"
+
+pub enum Transform { Identity, Translate(Point), Scale(u8), Mirror(Axis), Turn(Quarter), Compose(Vec&lt;Transform&gt;) }
+
+pub enum NodeKind {
+    Drawing { contents: Drawing },               // built with the typed drawing builder
+    Instance { master: Name, remap: ColourRemap },
+    Group,
+    Viewport { clip: Rect, offset: Point },
+    Text { text: Text, size: TextSize, direction: Direction, set: CharacterSet, colour: PaletteIndex },
+    Series { points: Vec&lt;Point&gt;, colour: PaletteIndex, pattern: LinePattern },
+}
+
+pub struct Attributes {
+    pub position: Option&lt;Point&gt;, pub transform: Option&lt;Transform&gt;, pub depth: Option&lt;Depth&gt;,
+    pub visible: Option&lt;bool&gt;, pub highlighted: Option&lt;bool&gt;, pub detectable: Option&lt;bool&gt;,
+    pub hit_shape: Option&lt;HitShape&gt;, pub interest: Option&lt;EventInterest&gt;, pub remap: Option&lt;ColourRemap&gt;,
+    pub on: Vec&lt;(EventKind, Message)&gt;,         // handlers are data, routed back as events
+}
+
+pub enum Operation {
+    DefineMaster { name: Name, contents: Drawing },
+    Create { name: Name, parent: Name, kind: NodeKind, attributes: Attributes },
+    Redefine { name: Name, contents: Drawing },
+    Delete { name: Name },
+    Set { name: Name, attributes: Attributes },
+    SetText { name: Name, text: Text },
+    SeriesAppend { name: Name, points: Vec&lt;Point&gt; },
+    SeriesDrop { name: Name, count: u16 },
+    SetMask { group: Name, mask: Name },
+    Palette { entries: Vec&lt;(PaletteIndex, Hls)&gt; },
+}
+
+pub enum Event {
+    Key { key: Key, modifiers: Modifiers, focus: Option&lt;Name&gt; },
+    Pointer { device: Device, phase: Phase, target: Option&lt;Picked&gt; },   // mouse, pen or touch
+    Gesture { gesture: Gesture, target: Option&lt;Picked&gt; },
+    Message { message: Message },                                      // a handler's data, routed back
+    Opened { reconnected: bool }, Closed,
+}
+
+pub struct Picked { pub name: Name, pub path: Vec&lt;Name&gt;, pub local: Point }
+pub struct Transaction { pub in_reply_to: Option&lt;EventId&gt;, pub operations: Vec&lt;Operation&gt; }</code></pre>
+<h3>22.4 Validation twice</h3>
+<p>The SDKs check values as applications build them, so mistakes surface early in the application's own language.
+The server checks everything again, because applications are untrusted.</p>
+
+<h2 id="apps">23. Applications and the application protocol</h2>
+<h3>23.1 Separate processes</h3>
+<p>Applications run as their own processes and connect to the server over a local socket. A crash in application code
+ends only that application; any language that speaks the protocol can be used; the server validates everything.
+Applications written in Rust can also link the server's crate directly and use the same types in process.</p>
+<h3>23.2 Messages</h3>
+<table>
+<tr><th>Direction</th><th>Message</th><th>Purpose</th></tr>
+<tr><td>Application to server</td><td><code>Register { app, version }</code></td><td>Declares what it serves</td></tr>
+<tr><td>Server to application</td><td><code>SessionOpened { session, reconnected }</code></td><td>A client connected</td></tr>
+<tr><td>Server to application</td><td><code>Event { session, id, event }</code></td><td>Typed input or a routed handler message</td></tr>
+<tr><td>Application to server</td><td><code>Transaction { session, in_reply_to, operations }</code></td><td>Changes, in reply to an event or unprompted (timers, data, other users)</td></tr>
+<tr><td>Server to application</td><td><code>Rejected { session, reason }</code></td><td>Invalid or over the limits; nothing changed</td></tr>
+<tr><td>Server to application</td><td><code>Cost { session, bytes, repaint }</code></td><td>What a transaction cost</td></tr>
+<tr><td>Server to application</td><td><code>SessionClosed { session }</code></td><td>The client went away</td></tr>
+</table>
+<p>On reconnection the server restores the client's screen from its mirror by itself; the application is told the
+session reconnected but need do nothing.</p>
+
+<h2 id="styles">24. Programming styles</h2>
+<p>The server's interface is always typed transactions. SDKs offer styles that produce them.</p>
+<h3>24.1 Direct operations</h3>
+<pre><code>// TypeScript: an industrial dashboard
+const app = await connect({ app: "plant-monitor", version: 1 });
+app.onSession(s => {
+  s.transact(t => {
+    t.defineMaster("valve", drawing(d => d.polygon(VALVE_OUTLINE, flat(1)).line(STEM, 2)));
+    t.create("valve:12", "plant", instance("valve", { at: point(220, 180), remap: running, detectable: true,
+                                                         on: [["click", msg("open", "valve:12")]] }));
+    t.create("trend:flow", "trend-panel", series([], { colour: palette(9) }));
+  });
+  s.onEvent(e => {
+    if (e.kind === "message" && e.message.name === "open") s.transact(t => t.set("panel:detail", { visible: true }));
+  });
+  setInterval(() => s.transact(t => {
+    t.seriesAppend("trend:flow", [point(nextX(), flowY())]);
+    t.setText("label:flow", `FLOW ${readFlow()} L/S`);
+  }), 1000);
+});</code></pre>
+<h3>24.2 Declarative views</h3>
+<p>The application describes the whole screen as a function of its state; the SDK compares each description with the
+previous one in the application's process and sends only the resulting operations, as React does for the browser.
+Names identify objects across descriptions.</p>
+<h3>24.3 Immediate mode</h3>
+<pre><code># Python: a frame function, reconciled by the SDK into operations
+@app.view
+def view(ui, model):
+    for pump in model.pumps:
+        if ui.button(f"pump:{pump.id}", pump.at, master="pump", remap=status_remap(pump)).clicked:
+            model.open(pump.id)
+    with ui.viewport("detail", rect(560, 40, 800, 480), offset=model.detail_scroll,
+                     visible=model.open_pump is not None):
+        ui.text("detail:pressure", point(8, 8), f"PRESSURE {model.pressure:.1f} BAR")
+        ui.series("detail:trend", model.pressure_history, colour=AMBER)</code></pre>
+<h3>24.4 Components</h3>
+<p>Large applications can build screens from function components with props and names; unchanged components are not
+re-sent to the server. This is an SDK layer.</p>
+<h3>24.5 Handlers as data</h3>
+<p>Handlers are messages, not functions: <code>on: [("click", Message("open", "valve:12"))]</code>. They cross the
+process boundary unchanged, behave the same in every language, and make applications testable without a client.</p>
+
+<h2 id="events">25. Events from client to application</h2>
+<ol>
+<li>The client picks the topmost detectable object under the pointer or touch, if the object asked for that kind of
+event, and sends the event with the object's id, path and local position.</li>
+<li>The server resolves ids to the application's names, applies gesture recognition to touch, tracks hover and
+focus, and turns handler-bearing objects' events into <code>Message</code> events.</li>
+<li>Events bubble up the path: the object, its group, the viewport, the screen, until a handler takes it.</li>
+<li>Keys go to the focused object; focus moves by click and by keyboard navigation in tree order unless set.</li>
+<li>For immediate feedback, the application's reply can set a highlight in the same transaction as any heavier change;
+the client applies all of it at once.</li>
+</ol>
+
+<h2 id="loop">26. The update loop</h2>
+<p>Every cause of change (input, timers, data, other users) reaches the application as a message and leaves it as a
+transaction. The server sends transactions in order; if the client's connection is slower than the changes arriving,
+the server coalesces pending transactions into one before sending, so a slow link receives the net change rather than
+a backlog. Because the platform has no acknowledgement protocol (section 2), flow control relies on the websocket's own
+backpressure: the server sends when the socket accepts more data, and coalesces while it does not.</p>
+
+<h2 id="size">27. Keeping pictures small</h2>
+<p>Object contents are ReGIS, and how ReGIS is written determines its size. Work on the test corpus established the
+techniques (recorded in <code>REGISOPTIMISATION.md</code>), with measured results:</p>
+<ul>
+<li>Smooth shading as one dithered polygon fill per tone band, using loaded 8 by 10 dither tiles and replace-mode
+writing: three paintings went from 5.1 to 6.4 MB to 69 to 106 KB, 57 to 88 times smaller.</li>
+<li>Pictures designed for size from the start: fifty paintings averaged 60 KB (largest 138 KB), against 5.7 MB for
+the naive method; all rendered complete.</li>
+<li>The minifier removes redundancy losslessly: under 1 percent on carefully encoded ReGIS, 7 to 34 percent on naive or
+hand-written ReGIS.</li>
+</ul>
+<p>The typed drawing builder applies these techniques when building object contents, and the minifier runs on every
+object's ReGIS before it is sent. In the platform, size also falls structurally: shapes become masters sent once,
+changes become attribute operations and edits in place, and charts become series objects.</p>
+
+<h2 id="examples">28. Worked examples</h2>
+<p>Byte counts are <em>estimated</em>.</p>
+<h3>28.1 Pressing a button</h3>
+<p>The button is an instance of a button master with a colour remap. Pressed: one <code>Set</code> of its remap to the
+pressed colours, about 10 bytes. Its label is a text object; changing it is one <code>SetText</code>.</p>
+<h3>28.2 Moving an object over a detailed background</h3>
+<p>A fleet marker instance moves across a shaded nebula. One <code>Set</code> of its position, about 10 bytes. The client
+repaints the old and new areas from the display file: the nebula tiles under them, clipped internally, and the marker
+at its new place. Nothing is resent.</p>
+<h3>28.3 A dialog over a busy screen</h3>
+<p>A dialog is a viewport group defined once and hidden. Opening it: one <code>Set</code> of visibility and its text
+objects' strings. Closing it: one <code>Set</code>. The client repaints what was beneath from the display file. This is
+everything save-unders tried to do, with no saved pixels.</p>
+<h3>28.4 Typing into a field</h3>
+<p>The field is a text object. Each keystroke: one <code>SetText</code> with the new string, plus a caret object moved
+by one <code>Set</code>, about 20 bytes.</p>
+<h3>28.5 Scrolling a list</h3>
+<p>The list is a viewport whose children are row objects. Scrolling by a row: one <code>Set</code> of the offset; the
+application deletes the row that left view and creates the row that entered, about 60 bytes in all. The client repaints
+the viewport's area.</p>
+<h3>28.6 A live trend</h3>
+<p>A trend line is a series object. Each second: one <code>SeriesAppend</code> and, once the window is full, one
+<code>SeriesDrop</code>, about 15 bytes. The client repaints the line's area.</p>
+
+<h2 id="strategy">29. A strategy game, turn by turn</h2>
+<p>The Quiet Meridian, an original space strategy game in the test corpus, has 128 stars, six species and 20 screens
+averaging about 14 KB of ReGIS each (<em>measured</em>). On the platform, with <em>estimated</em> costs:</p>
+<table>
+<tr><th>Action</th><th>Operations</th><th>Bytes</th></tr>
+<tr><td>Connecting</td><td>Masters for star, fleet, emblems and buttons; the background painting as tiled drawings; 128 star instances; panels as viewports</td><td>About 18,000, once</td></tr>
+<tr><td>Hovering over a star</td><td>The server sets highlight on the star the client picked</td><td>About 8</td></tr>
+<tr><td>Clicking a star</td><td>The side panel's text objects set; owner emblem instance's remap set</td><td>About 120</td></tr>
+<tr><td>Plotting a route</td><td>A series object for the route, appended per waypoint</td><td>About 10 per waypoint</td></tr>
+<tr><td>Opening research</td><td>Hide the galaxy group, show the research group (defined on first use, about 12,000 bytes)</td><td>About 16 after the first time</td></tr>
+<tr><td>A turn ends: 12 fleets move</td><td>12 position sets</td><td>About 120</td></tr>
+<tr><td>3 systems change owner</td><td>3 remap sets on star instances</td><td>About 30</td></tr>
+<tr><td>A lane fails</td><td>The lane object deleted</td><td>About 5</td></tr>
+<tr><td>A battle, per frame</td><td>Ship instance positions and beam objects created and deleted, sent by the server each tick</td><td>About 200</td></tr>
+</table>
+<p>Compared with the earlier plain-ReGIS design (section 33), every change is an order of magnitude smaller, and
+switching between screens costs a visibility change once each screen has been defined.</p>
+
+<h2 id="action">30. Fast action games</h2>
+<h3>30.1 Sprites are instances</h3>
+<p>A sprite is an instance of a master at a high depth. Each tick, the server sends position sets for everything that
+moved, creates new objects (bullets, sparks) and deletes finished ones. The client repaints the old and new areas from
+the display file, which is what sprite hardware did: nothing is ever burned into the background.</p>
+<h3>30.2 Bytes per frame</h3>
+<p>A busy shooter with a ship, twelve enemies, thirty bullets and a few explosions: about 45 position sets, a few
+creations and deletions, and a score text set, roughly 600 bytes a frame (<em>estimated</em>): about 18 KB a second at 30
+frames a second, or 36 KB at 60.</p>
+<h3>30.3 No local animation</h3>
+<p>Every movement is sent by the server each tick. The server runs a fixed-rate game tick for such applications and
+coalesces late frames, sending only the newest positions.</p>
+<h3>30.4 Latency</h3>
+<table>
+<tr><th>Link</th><th>Input to screen</th></tr>
+<tr><td>Same machine or local network</td><td>About 5 to 15 ms plus one frame</td></tr>
+<tr><td>Same city</td><td>About 20 to 40 ms</td></tr>
+<tr><td>Across a continent</td><td>About 60 to 100 ms</td></tr>
+<tr><td>Across an ocean</td><td>150 ms or more</td></tr>
+</table>
+<p>Strategy, puzzle and arcade games fit well at local or regional latency; competitive twitch games across long
+distances do not, because of the round trip, not the drawing.</p>
+
+<h2 id="cost">31. Memory and computation</h2>
+<h3>31.1 Server</h3>
+<p>Per session the server holds the display-file mirror (object structure and ReGIS contents, typically 20 to 150 KB,
+<em>estimated</em> from corpus screen sizes), the name map and routing state. No pixels. Tens of thousands of sessions
+fit on one ordinary server; identical masters and drawings can be shared between sessions by reference. Per
+transaction, the server validates, updates its mirror, computes damage bounds from object bounds, and encodes: work
+proportional to the operations, typically microseconds.</p>
+<h3>31.2 Client</h3>
+<p>The client holds the display file and its screen: two 800 by 480 pages at one byte per pixel (768 KB) plus the
+display file. A full-screen repaint of a detailed painting takes 27 to 53 ms on the development machine
+(<em>measured</em>, for the existing renderer drawing a whole 53 to 88 KB painting); typical damage repaints cover small
+areas and cost far less. Repaint cost per transaction is bounded (section 19).</p>
+<h3>31.3 Compared with live server interfaces</h3>
+<p>The server's per-session state is comparable to a LiveView connection (tens to hundreds of KB), because it holds a
+retained description, not pixels. The earlier design's per-session cost of about 0.9 MB of shadow pixels no longer
+exists.</p>
+<h3>31.4 Persistence</h3>
+<p>Application state is the application's responsibility. The server's mirrors are rebuilt by the application on
+demand after a server restart (the session is reported as reconnected and the application re-describes its screen). A
+client that reconnects is sent <code>Reset</code> and its whole display file. No resumption protocol is used (section 2).</p>
+
+<h2 id="security">32. Security</h2>
+<ul>
+<li><strong>The client</strong> parses the operation encoding and ReGIS with strict, bounded parsers, enforces the
+limits of section 19, and runs no code from the server. The renderer already has no unsafe code, no panics on
+untrusted input and a record of twelve security issues found and fixed.</li>
+<li><strong>The server</strong> validates every client message (sizes, ranges, rates) and authenticates sessions with
+unguessable, expiring tokens issued by the deployment's authentication system.</li>
+<li><strong>Applications</strong> cannot send raw ReGIS or exceed limits: every transaction is typed, validated and
+costed against the mirror before anything is sent. Past a rejection threshold, a session is closed.</li>
+<li><strong>Sessions are isolated</strong>: each is owned by its own task; shared masters are immutable once shared.</li>
+</ul>
+
+<h2 id="earlier">33. The earlier design, and why it changed</h2>
+<p>The first version of this proposal kept the client as a plain VT340 ReGIS terminal. Because such a terminal
+remembers nothing and cannot remove anything, all intelligence had to live in the server:</p>
+<ul>
+<li>a <strong>shadow terminal</strong> per client, an exact copy of the client's renderer fed every byte sent, to know
+what each client displayed (about 0.9 MB of pixels per session);</li>
+<li><strong>labelled command spans</strong> with exact pixel footprints measured by the shadow terminal, and a
+<strong>footprint index</strong> to find which commands drew an area;</li>
+<li><strong>replay with transitive closure</strong> to remove anything, repainting every command touching the damage
+and every command touching those, which only stayed local if backgrounds were cut into small tiles;</li>
+<li><strong>verification</strong> of every update by rendering, expensive enough that it had to be limited to damaged regions;</li>
+<li><strong>bit-plane overlays, complement-mode transients, palette tricks and page flips</strong> as cheap native ways
+to remove things;</li>
+<li><strong>a pixel-difference fallback</strong> with dither recognition;</li>
+<li>session tiering, compression and memory mapping to keep the pixel copies affordable;</li>
+<li>acknowledgements, state hashes and resumption to survive reconnects.</li>
+</ul>
+<p>Every one of those mechanisms existed to compensate for a client that keeps no structure. Once the decision was
+made that the platform controls the client with no fallback, the research of section 7 points straight at the
+alternative: put the retained structure in the client, as display processors, Tektronix terminals, X compositors and
+Flash all did. The server then needs no pixels, no replay, no verification by rendering and no plane tricks, and every
+change becomes an operation of a few bytes.</p>
+
+<h2 id="problems">34. Problems and how they are addressed</h2>
+<table>
+<tr><th>Problem</th><th>How the platform addresses it</th></tr>
+<tr><td>ReGIS remembers nothing about what it drew</td><td>The client's retained display file (sections 11 to 13)</td></tr>
+<tr><td>Nothing can be removed once drawn</td><td>Delete and hide, with damage repaint in the client (sections 13.4, 15)</td></tr>
+<tr><td>Drawing order is only history</td><td>Explicit depth (section 13.1)</td></tr>
+<tr><td>No clipping</td><td>Viewports, masks and internal clipping in repaint (sections 14, 15)</td></tr>
+<tr><td>Scrolling moves the whole screen</td><td>Viewport offsets set by the application (section 14.1)</td></tr>
+<tr><td>Repeated shapes resent many times</td><td>Masters and instances, with colour remapping (section 12)</td></tr>
+<tr><td>Changing one element means redrawing it and what was beneath</td><td>Edits in place and attribute operations (sections 16, 18.5)</td></tr>
+<tr><td>Text and charts change constantly</td><td>Text and series objects (section 17)</td></tr>
+<tr><td>Half-drawn updates</td><td>Transactions committed atomically (section 16.1)</td></tr>
+<tr><td>Input names coordinates, not things</td><td>Picking by object, hit shapes, event interest (section 18)</td></tr>
+<tr><td>Touch must work everywhere</td><td>Raw touch from the client, gestures recognised in the server (section 18.6)</td></tr>
+<tr><td>Applications in several languages must agree</td><td>One schema generating Rust, TypeScript and Python types (section 22)</td></tr>
+<tr><td>Faulty applications</td><td>Separate processes, typed transactions, validation and limits (sections 22, 23, 32)</td></tr>
+<tr><td>Faulty or compromised server</td><td>Client-side structural limits (section 19)</td></tr>
+<tr><td>Slow links</td><td>Coalescing of pending transactions and websocket backpressure (section 26)</td></tr>
+<tr><td>Detailed pictures are megabytes</td><td>Compact encoding, size-aware drawing builder, minifier (section 27)</td></tr>
+<tr><td>Server memory per session</td><td>Mirror of objects only, no pixels (section 31)</td></tr>
+<tr><td>Reconnecting</td><td>Reset and resend the display file from the mirror (section 31.4)</td></tr>
+<tr><td>Server and client drawing differently</td><td>Deterministic rendering, conformance tests, version check at connection (sections 11, 20, 38)</td></tr>
+</table>
+
+<h2 id="excluded">35. Excluded on purpose</h2>
+<table>
+<tr><th>Excluded</th><th>Reason</th></tr>
+<tr><td>Fallback to plain VT340 ReGIS and capability negotiation</td><td>The platform is controlled end to end (section 2)</td></tr>
+<tr><td>Acknowledgements, state hashes, resynchronisation</td><td>Decided against; reconnect resends the display file</td></tr>
+<tr><td>Raster images of any kind, including offscreen bitmaps</td><td>Decided against: everything is vector</td></tr>
+<tr><td>Local animation, timelines, palette cycling on the client</td><td>Decided against: the server sends every change</td></tr>
+<tr><td>A separate text layer or font system</td><td>Decided against: ReGIS text and loadable sets only</td></tr>
+<tr><td>Bitmap layers, save and restore of regions, rectangle copy</td><td>Superseded by retained objects, depth, viewports and damage repaint</td></tr>
+<tr><td>Downloadable programs on the client</td><td>Local logic; a large attack surface</td></tr>
+<tr><td>Arbitrary rotation and fractional transforms</td><td>Lose exactness on a pixel grid; reconsider only on real need</td></tr>
+<tr><td>Full Porter-Duff blending</td><td>Indexed colour has no alpha; masks cover the useful part</td></tr>
+</table>
+
+<h2 id="decisions">36. Decisions needed</h2>
+<ol>
+<li><strong>The schema format and code generator</strong> for TypeScript and Python types.</li>
+<li><strong>The server's crates:</strong> an asynchronous runtime, websockets and serialisation. The renderer workspace
+uses no external crates, and each needs approval.</li>
+<li><strong>The binary encoding of client operations</strong>, specified exactly.</li>
+<li><strong>Where the platform lives:</strong> extensions in the renderer repository, server and SDKs in new repositories, or one repository.</li>
+<li><strong>The limits of section 19,</strong> confirmed or adjusted.</li>
+<li><strong>Authentication:</strong> which system issues session tokens.</li>
+<li><strong>The first two applications</strong> that prove the design, for example an industrial dashboard and the strategy game.</li>
+</ol>
+
+<h2 id="plan">37. Implementation plan</h2>
+<ol>
+<li><strong>Specify the display file</strong>: object kinds, operations, attributes, damage rules, limits and the binary
+encoding, with a conformance suite of display files and their expected pixels.</li>
+<li><strong>Client display file and repaint</strong>: objects, masters, instances, depth, hierarchy, visibility,
+transforms, internal clipping and damage repaint, built on the existing renderer.</li>
+<li><strong>Client viewports, masks, text and series objects, highlight and colour remapping.</strong></li>
+<li><strong>Client input</strong>: pushed events, picking, hit shapes, event interest.</li>
+<li><strong>Server skeleton</strong>: websockets, sessions as tasks, the display-file mirror, validation, limits, coalescing, reconnect by resend.</li>
+<li><strong>Schema, generated types and one SDK</strong> with direct operations.</li>
+<li><strong>Two real applications</strong>, measured for bytes, latency and memory against the estimates in this document.</li>
+<li><strong>Gesture recognition, focus and keyboard navigation</strong> in the server.</li>
+<li><strong>Declarative and immediate-mode SDK styles</strong>, and the second language's SDK.</li>
+<li><strong>The typed drawing builder</strong> with the compact painting techniques, and master deduplication in the server.</li>
+</ol>
+
+<h2 id="testing">38. Testing</h2>
+<ul>
+<li><strong>Conformance:</strong> every display file in the suite produces exactly its expected pixels, on every build of the client.</li>
+<li><strong>Repaint equivalence:</strong> for random sequences of operations, the screen after incremental damage repaint
+equals a full redraw of the display file. This is the property that replaces per-update verification, and it runs in
+debug builds and a long randomised test, as the renderer's gate does today.</li>
+<li><strong>Mirror equivalence:</strong> the server's mirror after any sequence of transactions equals the client's display file.</li>
+<li><strong>Limits:</strong> operations at and beyond every limit, from both server and application sides.</li>
+<li><strong>Protocol robustness:</strong> malformed, oversized and out-of-order messages.</li>
+<li><strong>Applications without a client:</strong> feed events, check transactions.</li>
+<li><strong>Load:</strong> memory and processing per session at realistic mixes.</li>
+<li><strong>Local gates:</strong> formatting, strict lints, the no-panic lists, tests and documentation, enforced by git hooks.</li>
+</ul>
+
+<h2 id="glossary">39. Glossary</h2>
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td>Display file</td><td>The client's retained model of the screen: masters, objects, structure and attributes</td></tr>
+<tr><td>Master</td><td>A drawing defined once and never displayed directly</td></tr>
+<tr><td>Instance</td><td>A placement of a master, with its own position, transform, depth and attributes</td></tr>
+<tr><td>Object</td><td>Anything in the display file: drawing, instance, group, viewport, text or series</td></tr>
+<tr><td>Depth</td><td>An object's place in drawing order within its parent</td></tr>
+<tr><td>Viewport</td><td>A group with a clip rectangle and an inner coordinate offset</td></tr>
+<tr><td>Mask</td><td>An object used as a clipping shape for a group</td></tr>
+<tr><td>Damage</td><td>The area of the screen a transaction changes</td></tr>
+<tr><td>Transaction</td><td>A batch of operations applied atomically and repainted once</td></tr>
+<tr><td>Mirror</td><td>The server's copy of a client's display file, without pixels</td></tr>
+<tr><td>Picking</td><td>Finding the topmost detectable object under the pointer or a touch</td></tr>
+<tr><td>Colour remap</td><td>An instance's mapping of its master's palette indices to others</td></tr>
+<tr><td>Series object</td><td>A polyline updated a point at a time</td></tr>
+</table>
+
+<h2 id="sources">40. Sources</h2>
+<ul>
+<li><a href="https://en.wikipedia.org/wiki/Sketchpad">Sketchpad (Wikipedia)</a></li>
+<li><a href="https://www.cs.ucf.edu/courses/cap6105/fall2010/readings/sketchpad.pdf">Sutherland, Sketchpad: a man-machine graphical communication system</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Line_Drawing_System-1">Line Drawing System-1</a></li>
+<li><a href="https://ronbaecker.com/wp-content/uploads/2023/06/digital-video-display-systems-and-dynamic-graphics.pdf">Baecker, Digital video display systems and dynamic graphics</a></li>
+<li><a href="https://doc.cat-v.org/bell_labs/blit">Pike, The Blit: a multiplexed graphics terminal</a></li>
+<li><a href="https://history.siggraph.org/?p=106058">Pike, Graphics in overlapping bitmap layers</a></li>
+<li><a href="https://man.aiju.de/3/draw">Plan 9 draw(3)</a></li>
+<li><a href="https://plan9.io/sources/contrib/uriel/doc/misc/rio_slides.pdf">Pike, Rio: design of a concurrent window system</a></li>
+<li><a href="https://mirrors.mit.edu/NetBSD/NetBSD-release-11/xsrc/external/mit/xorgproto/dist/renderproto.txt">X Render extension protocol</a></li>
+<li><a href="https://lists.freedesktop.org/archives/xorg/2009-January/042820.html">X.Org discussion of save-under support</a></li>
+<li><a href="https://cgit.freedesktop.org/xorg/proto/compositeproto/tree/compositeproto.txt">X Composite extension protocol</a></li>
+<li><a href="https://discmaster.textfiles.com/file/12033/SGI%20Developer%20Toolbox%206.1%20-%20Disc%201.iso/toolbox/documents/X/layers/node3.html?html=true">SGI note on overlay planes, save-unders and backing store</a></li>
+<li><a href="https://typeset.io/pdf/the-interactive-performance-of-slim-a-stateless-thin-client-4s3aiaojtj.pdf">Schmidt, Lam and Northcutt, The interactive performance of SLIM</a></li>
+<li><a href="https://www.cs.columbia.edu/~nieh/pubs/sosp2005_fordist.pdf">Baratto, Kim and Nieh, THINC: a virtual display architecture for thin-client computing</a></li>
+<li><a href="https://usenix.org/legacy/event/usenix02/full_papers/yang/yang.pdf">Yang and others, thin-client performance comparison (USENIX 2002)</a></li>
+<li><a href="https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpegdi/a922b0f7-7dc9-4b55-8567-be4d1038d97f">RDP graphics device interface: caches</a></li>
+<li><a href="https://msdn.microsoft.com/en-us/ms-rdpegdi/63061daa-9808-43c9-b00d-d5eda7dc8c21">RDP offscreen bitmap cache</a></li>
+<li><a href="https://msdn.microsoft.com/en-us/library/6d4a8cc0-d481-4766-b609-778b09c1ceac">RDP glyph and fragment caches</a></li>
+<li>DEC, VT330/VT340 Programmer Reference Manual, Volume 2: Graphics Programming</li>
+</ul>
+
+</main>
+</body>
+</html>
