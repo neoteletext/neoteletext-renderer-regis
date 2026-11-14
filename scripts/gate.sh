@@ -1,5 +1,5 @@
 # Copied by neoteletext-common gates/sync; change it there, not here.
-# neoteletext-common gates at 2e820ec7bef160793cd8fb6e3f7fdab7e7d1533d
+# neoteletext-common gates at 361d842c4d6da00e425c87ffdda9a0edcc344f4a
 # The gate machinery every neoteletext repository shares (DEVELOPMENT.md
 # section 9). A
 # repository's scripts/check.sh sets its own steps and sources its copy of
