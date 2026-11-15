@@ -91,6 +91,14 @@ impl Picture {
         }
     }
 
+    /// The screen position of the origin of each detectable drawing that
+    /// was painted, by drawing number: what [`Picture::pick`] subtracts.
+    /// A caller that keeps the pick record apart from the picture, as one
+    /// that passes it to another process does, keeps these with it.
+    pub fn origins(&self) -> impl Iterator<Item = (u16, i32, i32)> + '_ {
+        self.origins.iter().map(|(drawing, (x, y))| (*drawing, *x, *y))
+    }
+
     /// The count of commits applied when the picture was composed.
     #[must_use]
     pub const fn commits(&self) -> u32 {

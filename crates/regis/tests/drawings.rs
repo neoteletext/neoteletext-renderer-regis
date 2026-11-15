@@ -383,3 +383,22 @@ fn arbitrary_drawing_operations_never_panic_and_stay_within_the_work_cap() {
         assert!(picture.work() <= regis::limits::MAX_REBUILD_WORK);
     }
 }
+
+#[test]
+fn the_validator_fails_the_commits_a_terminal_would_and_no_others() {
+    let good = format!("D(B1){SQUARE}D(E)D(S1(X10,I1),C)");
+    for (stream, expected) in [(good.clone(), None), (format!("{good}D(S2(P9),C)"), Some((5, 2)))] {
+        let mut validator = regis::Validator::new();
+        let mut events = validator.feed_regis(stream.as_bytes());
+        events.extend(validator.finish());
+        assert_eq!(failure(&events), expected);
+        assert_eq!(failure(&run(stream.as_bytes()).2), expected);
+        assert_eq!(validator.commits(), 1);
+    }
+}
+
+#[test]
+fn the_origins_are_those_of_the_detectable_drawings_painted() {
+    let (.., picture) = run(format!("D(B2){SQUARE}D(E)D(S1(X100,Y50),S2(P1,X5,Y6,I1),S3(I1,V0),C)").as_bytes());
+    assert_eq!(picture.origins().collect::<Vec<_>>(), [(2, 105, 56)]);
+}

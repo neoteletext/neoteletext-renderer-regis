@@ -9,23 +9,30 @@ use crate::surface::Screen;
 use crate::terminal::Terminal;
 
 /// What a sender feeds its ReGIS to before sending it: a receiver's own
-/// code and caps, with a screen of its own, so that a commit fails here
-/// exactly when it would fail at the receiver.
+/// code and caps, so that a commit fails here exactly when it would fail
+/// at the receiver. It keeps no pixels: what the stream draws outside
+/// numbered drawings is read and not drawn, since no check depends on it.
 ///
 /// Feed it every byte that will be sent, in order. An
 /// [`Event::CommitFailed`] among the events returned means the receiver
 /// would refuse that commit too.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Validator {
     terminal: Terminal,
     screen: Screen,
+}
+
+impl Default for Validator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Validator {
     /// A validator in the state of a receiver that has been sent nothing.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self { terminal: Terminal::new(), screen: Screen::absent() }
     }
 
     /// Supplies the shapes of the built-in characters, as
