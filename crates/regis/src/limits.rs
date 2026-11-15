@@ -52,6 +52,17 @@ pub const WORK_PER_BYTE: u64 = 256;
 /// Work units that can be saved up; also the allowance at start.
 pub const WORK_CAP: u64 = 16_000_000;
 
+/// The work units of repainting numbered drawings a receiver may spend on
+/// one picture each second ([`RepaintBudget`](crate::RepaintBudget)):
+/// twice [`MAX_REBUILD_WORK`], so a picture at the cap of one repaint is
+/// repainted twice a second, about 28 % of one Apple M1 processor at the
+/// 140 milliseconds such a repaint was measured to take.
+pub const REPAINT_WORK_PER_SECOND: u64 = 2 * MAX_REBUILD_WORK;
+/// The most repaint allowance a receiver holds for one picture: one
+/// second's worth, so a picture left alone can be repainted at once
+/// several times over, and no more is ever saved up.
+pub const REPAINT_WORK_HELD: u64 = REPAINT_WORK_PER_SECOND;
+
 /// Numbered drawings of ReGIS v2 are named 1 to this (`docs/regis-v2.md`,
 /// "The D command"); it is also the most that can exist.
 pub const MAX_DRAWING_NUMBER: u16 = 65_535;

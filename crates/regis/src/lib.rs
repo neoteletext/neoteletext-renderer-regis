@@ -59,3 +59,4 @@ pub use scene::{Pick, Picture, ViewerState};
 pub use surface::{Canvas, SCREEN_HEIGHT, SCREEN_WIDTH, Screen};
 pub use terminal::Terminal;
 pub use validator::Validator;
+pub use work::RepaintBudget;

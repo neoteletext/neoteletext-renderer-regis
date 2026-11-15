@@ -136,6 +136,16 @@ The renderer rebuilds the whole picture each time its caller asks for one: the b
 - **Presentation:** the renderer builds the committed picture apart from the base, in a picture the caller owns, and gives it with its pick record, its commit count and the work it cost as one frame. A commit is atomic on the visible screen as well as in the scene. The renderer says when a frame is wanted: an event at each commit applied, and a mark on the screen when base drawing changed it. A picture also says which rows differ from the one before.
 - **Staged batches** survive leaving and re-entering ReGIS mode. Only a definition left open is discarded.
 
+## Repaint budget
+
+A commit of a dozen bytes, or a movement of the viewer's pointer, can cause a repaint that costs up to the cap on one repaint, so repaint work cannot be bounded by the bytes received. It is bounded by time. Added on 16 November 2026.
+
+- **The rule:** a receiver spends at most 200,000,000 work units a second repainting one picture, and holds at most 200,000,000 in hand. A repaint may start while anything is in hand, is paid for in full, and what it overdraws is earned back before the next.
+- **Held back, never dropped:** while nothing is in hand the receiver keeps showing the picture it has. However many commits and changes of viewer state arrive meanwhile, it makes one repaint when the budget allows, of the latest scene. Bytes are still read as they arrive and commits still succeed or fail in order; only the picture is late.
+- **The bound:** over any `t` seconds, one picture's repaints cost at most 200,000,000 + `t` × 200,000,000 + 100,000,000 work units.
+- **Who keeps it:** the receiver, since the renderer has no clock. The renderer supplies the meter (`RepaintBudget`), which is told how much time has passed.
+- Both figures are starting values, to be confirmed by measurement on real pages.
+
 ## Viewer state
 
 The program that shows the picture (the receiver) can change how drawings look according to what the viewer's pointer is doing, with no byte of ReGIS arriving and no message to the application. Added on 16 November 2026.
@@ -338,6 +348,8 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
 9. **A validator keeps no pixels**: what the stream draws outside numbered drawings is read and not drawn.
 
 10. **Viewer state, added 16 November 2026** (DEC-6366, REQ-6367): the hover look and pressed look attributes, `H` and `A`, and the hovered, pressed and hidden drawings a receiver sets (`Terminal::set_viewer_state`). The proposal had no receiver-drawn response to the pointer.
+
+11. **Repaint budget, added 16 November 2026** (DEC-6366, REQ-6368): the proposal bounded one repaint and not how often one is bought.
 
 The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
 
