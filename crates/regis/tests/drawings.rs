@@ -402,3 +402,11 @@ fn the_origins_are_those_of_the_detectable_drawings_painted() {
     let (.., picture) = run(format!("D(B2){SQUARE}D(E)D(S1(X100,Y50),S2(P1,X5,Y6,I1),S3(I1,V0),C)").as_bytes());
     assert_eq!(picture.origins().collect::<Vec<_>>(), [(2, 105, 56)]);
 }
+
+#[test]
+fn a_terminal_and_a_validator_can_be_handed_to_another_thread() {
+    fn sendable<T: Send>() {}
+    sendable::<Terminal>();
+    sendable::<regis::Validator>();
+    sendable::<Picture>();
+}

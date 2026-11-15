@@ -2,7 +2,14 @@
 
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::rc::Rc;
+// Contents are shared between the committed and the staged scene. Where
+// the target has atomics the sharing is thread-safe, so that a terminal
+// or a validator can be handed to another thread, as a server does; a
+// target without them has no threads to hand it to.
+#[cfg(not(target_has_atomic = "ptr"))]
+use alloc::rc::Rc as Shared;
+#[cfg(target_has_atomic = "ptr")]
+use alloc::sync::Arc as Shared;
 use alloc::vec::Vec;
 
 use super::Scene;
@@ -12,7 +19,7 @@ use crate::machine::{Attribute, Clip};
 #[derive(Clone, Debug)]
 pub(super) struct Drawing {
     /// The ReGIS commands it holds, as received.
-    pub(super) contents: Rc<[u8]>,
+    pub(super) contents: Shared<[u8]>,
     /// The work its contents cost to paint under the committed tables,
     /// once measured.
     pub(super) work: Option<u64>,
@@ -31,7 +38,7 @@ pub(super) struct Drawing {
 impl Default for Drawing {
     fn default() -> Self {
         Self {
-            contents: Rc::from([]),
+            contents: Shared::from([]),
             work: None,
             x: 0,
             y: 0,
@@ -135,7 +142,7 @@ impl Stage {
             return None;
         }
         self.bytes = bytes;
-        drawing.contents = Rc::from(contents);
+        drawing.contents = Shared::from(contents);
         drawing.work = None;
         Some(())
     }
