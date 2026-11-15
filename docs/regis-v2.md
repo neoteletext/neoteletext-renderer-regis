@@ -10,13 +10,13 @@ The changes, all additive:
 
 1. One new command, `D`, to define, change and delete numbered drawings.
 2. Seven attributes per numbered drawing: position, depth, visible, parent, source, detectable, clip rectangle.
-3. The client keeps numbered drawings and repaints the screen itself when one changes.
+3. The renderer keeps numbered drawings and repaints the screen itself when one changes.
 4. Commit: staged changes appear together, or are rejected together.
 5. A defined starting state for each numbered drawing, so nothing leaks between them.
 6. Screen, load and report commands are ignored inside a numbered drawing.
-7. Input is pushed, and pointer events name the drawing under the pointer. Input events are the only messages the client sends.
+7. A pick record names the drawing under each pixel, so a screen position can be resolved to a drawing.
 
-This document covers the language and the client. The server and SDKs of the earlier platform proposal sit on top of it and are not redesigned here.
+This document covers the language and the renderer only. How the bytes are carried, how input reaches the application, and how a server keeps and resends a scene are outside its scope: the system that embeds the renderer defines them.
 
 ## Requirements
 
@@ -33,9 +33,9 @@ These are the constraints the design was held to.
 The screen is the v1 picture with numbered drawings laid over it.
 
 - **Base.** Any command outside a numbered drawing executes immediately on the bitmap, as today. A stream with no `D` command takes the existing code path, so compatibility holds by construction.
-- **Numbered drawings.** Each holds ordinary ReGIS commands, kept by the client and replayed when the screen needs repainting. They appear over the base in depth order.
+- **Numbered drawings.** Each holds ordinary ReGIS commands, kept by the renderer and replayed when the screen needs repainting. They appear over the base in depth order.
 
-A v2 application puts its background in a numbered drawing at the lowest depth. The base exists for v1 streams and is not restored on reconnect; numbered drawings and the shared tables are.
+A v2 application puts its background in a numbered drawing at the lowest depth, so the whole picture is described by its numbered drawings and the shared tables. The base exists for v1 streams.
 
 There is one kind of numbered drawing. The things an application needs are uses of it, not separate types:
 
@@ -58,7 +58,7 @@ There is one kind of numbered drawing. The things an application needs are uses 
 | Set | Changes one or more attributes of drawing *n*. If *n* does not exist, creates it empty. |
 | Delete | Removes drawing *n* and its children. |
 | Delete all | Removes every numbered drawing. |
-| Commit | Applies all changes since the last commit at once. If any would break a limit, none is applied and the client closes the connection (see Failed commits). |
+| Commit | Applies all changes since the last commit at once. If any would break a limit, none is applied and the failure is reported to the caller (see Failed commits). |
 
 Drawing numbers run from 1 to 65,535. Deleting a number that does not exist does nothing. Naming a parent that does not exist rejects the commit.
 
@@ -104,7 +104,7 @@ The screen is defined as the base with the numbered drawings executed over it in
 
 1. **Starting state.** Each time it is drawn, its contents start in a fresh drawing context (default position, write controls and text controls), with \[0,0\] at its own origin. Nothing it sets carries over to anything else. It uses the shared tables as rule 4 defines and does not clear the pixels beneath it. This is needed because in v1 a changed setting stays in force until changed again ([chapter 1](https://vt100.net/docs/vt3xx-gp/chapter1.html)).
 2. **Writing lands on what is beneath.** Overlay, replace, complement, erase and plane select behave as v1 defines them ([chapter 3](https://vt100.net/docs/vt3xx-gp/chapter3.html)), applied to the pixels below the drawing in depth order.
-3. **Terminal commands are ignored inside.** `S`, `L`, `R`, and macrograph definition and clearing have no effect inside a numbered drawing. Calling a macrograph is allowed, and these commands are ignored inside the macrograph too. So is any D operation: D is honoured only in the stream as received, never from a macrograph expansion, inside a drawing or outside one. The client ignores these commands rather than rejecting the drawing, because a macrograph can be redefined later to contain one. The server rejects them with an error to the application.
+3. **Terminal commands are ignored inside.** `S`, `L`, `R`, and macrograph definition and clearing have no effect inside a numbered drawing. Calling a macrograph is allowed, and these commands are ignored inside the macrograph too. So is any D operation: D is honoured only in the stream as received, never from a macrograph expansion, inside a drawing or outside one. The renderer ignores these commands rather than rejecting the drawing, because a macrograph can be redefined later to contain one.
 4. **Shared tables stay global, as in v1.** The palette, the three loadable character sets ([chapter 8](https://vt100.net/docs/vt3xx-gp/chapter8.html)) and the 26 macrographs ([chapter 9](https://www.vt100.net/docs/vt3xx-gp/chapter9.html)) are set outside numbered drawings. Commands outside numbered drawings take effect immediately and are never staged, so a changed loaded set or macrograph applies to base drawing at once. Numbered drawings use the loaded sets and macrographs as they stood at the last successful commit: each commit takes a copy (about 19 KB in the current renderer: 16,384 bytes of macrographs and 2,880 of loaded sets), checks the caps against it with macrographs expanded, and repaints. A table change and the drawings that depend on it therefore appear together. The palette is one colour map for the whole screen, base included. Outside an open batch a palette change is immediate, as in v1. While a batch is open, from the first D operation after a commit, it is held and takes effect at that commit for the whole screen, so new drawings and their colours appear in one frame. If the commit fails, it is discarded with the batch.
 
 Two consequences:
@@ -125,24 +125,23 @@ The first implementation rebuilds the whole screen at every commit: the base, th
 3. Redraws the numbered drawings that intersect it, in depth order, writing only pixels inside the damage.
 
 - **Required property:** the result is identical, pixel for pixel, to rebuilding the whole screen from the base and all numbered drawings.
-- **Drawing on the base** takes effect immediately, as in v1. If numbered drawings lie over the affected area, they are repainted on top. The client need only bring the screen up to date before it next presents a frame, so a long run of base commands does not cause a repaint for each one.
+- **Drawing on the base** takes effect immediately, as in v1. If numbered drawings lie over the affected area, they are repainted on top. The renderer need only bring the screen up to date before it next presents a frame, so a long run of base commands does not cause a repaint for each one.
 - **Further optimisation** (tiles, spatial indexes) comes only if measurement calls for it.
 
-* **Validation:** at commit the client checks the whole batch against the limits. If any operation fails, none is applied, the screen is unchanged, and the client closes the connection as described under Failed commits. It sends no report.
+* **Validation:** at commit the renderer checks the whole batch against the limits. If any operation fails, none is applied, the screen is unchanged, and the failure is reported to the caller as described under Failed commits.
 * **Reused drawings:** when a drawing changes, every drawing that uses it as a source, directly or indirectly, is damaged and repainted too.
 
-- **Presentation:** the client builds the committed picture off screen and presents it, with its pick record, as one frame. A commit is atomic on the visible screen as well as in the scene.
+- **Presentation:** the renderer builds the committed picture off screen and presents it, with its pick record, as one frame. A commit is atomic on the visible screen as well as in the scene.
 - **Staged batches** survive leaving and re-entering ReGIS mode. Only a definition left open is discarded.
 
-## Input
+## Picking
 
-The client sends key, pointer and touch events as they happen, and pointer events name the drawing under the pointer.
+The renderer can say which numbered drawing lies under any screen position. How input reaches the application, and in what messages, is outside the language.
 
-- **What v1 does:** a position is reported on request, or on a button press in multiple input mode, and always as coordinates only ([chapter 10](https://vt100.net/docs/vt3xx-gp/chapter10.html)). On a v2 connection the client sends no v1 report replies: `R` is ignored on the base as well as inside drawings, because pushed input events replace it. Rendering is unaffected, so compatibility holds; only replies are suppressed.
-- **What a pointer event carries:** the event type, the screen position, the number of the drawing picked (0 for none), and the position within that drawing.
-- **How the client knows:** during repaint it records, for each pixel, its pick target. This record is allocated only once a detectable drawing exists; at 16 bits per pixel it is 768 KB. It holds the drawing number directly, with 0 for none.
-- **Reused drawings:** a reused subtree counts as part of the drawing that placed it, so the event names that drawing, and only if it or a drawing above it is detectable.
-- **Movement** events are sent at a capped rate.
+- **What v1 does:** a position is reported on request, or on a button press in multiple input mode, and always as coordinates only ([chapter 10](https://vt100.net/docs/vt3xx-gp/chapter10.html)). v2 leaves `R` on the base as v1 defines it; what is done with its replies is the caller's choice.
+- **What a lookup gives:** for a screen position, the number of the drawing picked (0 for none) and the position within that drawing.
+- **How the renderer knows:** during repaint it records, for each pixel, its pick target. This record is allocated only once a detectable drawing exists; at 16 bits per pixel it is 768 KB. It holds the drawing number directly, with 0 for none.
+- **Reused drawings:** a reused subtree counts as part of the drawing that placed it, so the lookup names that drawing, and only if it or a drawing above it is detectable.
 
 * **Picking rule:** for each drawing that writes a pixel, walk up from it through its parents to the first detectable drawing; that is its pick target. The pixel belongs to the pick target of the last drawing to write it, whether or not the colour changed. Drawings with no detectable drawing at or above them do not affect picking, so a click on them reaches whatever detectable drawing lies beneath. To stop that under a panel, mark the panel detectable. So a detectable group reports hits on its plain children, and a detectable child inside it reports itself.
 
@@ -150,13 +149,13 @@ The client sends key, pointer and touch events as they happen, and pointer event
 
 * **Text and thin lines:** picking follows drawn pixels, so a tap between the letters of an overlay-mode label misses. Give the detectable drawing or group a replace-mode background, so every pixel of its area is written. If that proves insufficient for touch, it is the case for the deferred hit rectangle.
 
-- **Revision:** every event carries the count of commits the client has applied. A rejected commit closes the connection, so every commit counted was applied. The server can then tell whether the client had seen everything sent, and discard an event aimed at a number that has since been deleted and reused. The client never waits on this number. It is a 32-bit counter that starts at 0 on each connection and wraps to 0; the server compares it for equality only. Counting commits is enough, because numbered drawings change only at a commit.
+- **Revision:** the renderer counts the commits it has applied; a failed commit is not counted. A caller that stamps input with this count lets the application tell which scene the user saw, and discard input aimed at a number that has since been deleted and reused. It is a 32-bit counter that starts at 0 and wraps to 0, so it is compared for equality only. Counting commits is enough, because numbered drawings change only at a commit.
 
-Gestures, focus and routing are not part of the language. They belong in the server.
+Gestures, focus and routing are not part of the language.
 
 ## Grammar
 
-This section fixes the syntax of `D` and of the messages the client sends. It follows v1 conventions: options in parentheses, decimal numbers, commas between options. It was checked against the renderer's lexer (`crates/regis/src/lexer/scan.rs`), which implements the manual's chapter 1 rules on letters, control characters and resynchronisation.
+This section fixes the syntax of `D`. It follows v1 conventions: options in parentheses, decimal numbers, commas between options. It was checked against the renderer's lexer (`crates/regis/src/lexer/scan.rs`), which implements the manual's chapter 1 rules on letters, control characters and resynchronisation.
 
 - **Letters are case-insensitive**, as every v1 command and option letter is: `d(e)` is `D(E)`.
 - **Spaces and control characters are ignored** inside a `D` operation, as everywhere outside a quoted string in v1.
@@ -181,7 +180,7 @@ This section fixes the syntax of `D` and of the messages the client sends. It fo
 ### Definitions
 
 - The contents are everything between `D(B<n>)` and `D(E)`, stored as received. Macrograph calls are stored, not expanded.
-- `D(E)` is recognised only where the v1 lexer reads `D` as a command letter. A `D` inside a quoted string, inside parentheses or brackets (such as `T(D90)`), naming a macrograph (`@D`), or in the hexadecimal cell data of an `L` command (where `D` and `E` are digits) is part of the contents. The client therefore scans contents with the v1 lexer in its v1 modes, not with a plain text search.
+- `D(E)` is recognised only where the v1 lexer reads `D` as a command letter. A `D` inside a quoted string, inside parentheses or brackets (such as `T(D90)`), naming a macrograph (`@D`), or in the hexadecimal cell data of an `L` command (where `D` and `E` are digits) is part of the contents. The renderer therefore scans contents with the v1 lexer in its v1 modes, not with a plain text search.
 - Any other `D` operation before `D(E)` makes the batch fail. Definitions do not nest.
 - A definition still open when ReGIS mode is exited is discarded, and the batch fails.
 
@@ -205,53 +204,11 @@ This section fixes the syntax of `D` and of the messages the client sends. It fo
 - A sign is part of the value and never means a relative move. Bracketed coordinates are not used in `D`, because in v1 a signed number in brackets is relative.
 - Attributes not named in an `S` are left unchanged.
 
-### Client messages
-
-Each message is one line of text ending in a carriage return, as v1 reports do ([chapter 10](https://vt100.net/docs/vt3xx-gp/chapter10.html)). Fields are decimal and comma-separated; coordinates are in brackets.
-
-| Form | Meaning |
-| --- | --- |
-| `DP<rev>,<pointer>,<action>,<buttons>[x,y]<n>[lx,ly]` | Pointer event |
-| `DK<rev>,<action>,<key>,<modifiers>` | Key event |
-| `DW<rev>,<dx>,<dy>[x,y]<n>[lx,ly]` | Wheel or two-finger scroll |
-
-These three are the only messages the client ever sends.
-
-- *rev* is the number of commits the client has applied on this connection.
-- *pointer* is 0 for the mouse and 1 upward for touch points.
-- *action* is 0 move, 1 press, 2 release for pointers; 1 down, 2 up, 3 auto-repeat for keys.
-- *buttons* is a bit mask of the buttons held: 1 primary, 2 secondary, 4 middle.
-- `[x,y]` is the screen position. *n* is the drawing picked, or 0 for none, in which case `[lx,ly]` is omitted. `[lx,ly]` is the position within that drawing and may be negative.
-- *dx*, *dy* are the scroll distance in screen pixels, signed, positive to the right and downward, as the client's platform reports it. The wheel message picks like a pointer event, so the application knows which panel to scroll; scrolling itself is the application's work, as for every other change.
-- **Movement and scroll rate:** at most 60 messages a second per pointer, and at most 60 wheel messages a second. Between sends the client keeps only the latest position and sums scroll distances, so nothing is queued. Sixty a second matches a display's frame rate, which matters because every dragged object moves only when the server sends the move. At about 30 bytes a message it costs under 2 KB a second.
-
-Example: `DP7,0,1,1[412,180]12[20,6]` means that after 7 commits the mouse pressed button 1 at 412,180, on drawing 12, at 20,6 within it.
-
-### Keys
-
-- *key* above zero is the Unicode scalar value of the character the key produces under the current keyboard layout with Shift applied, before Control, Alt or Meta are applied: Control with C reports 99 (`c`) with the Control bit set. Keys that produce control characters report them: Backspace 8, Tab 9, Enter 13, Escape 27, Delete 127. Space is 32.
-- *key* below zero is a key that produces no character: −1 Up, −2 Down, −3 Left, −4 Right, −5 Home, −6 End, −7 Page Up, −8 Page Down, −9 Insert, and −10 − *k* for function key F*k*, F1 to F24 (−11 to −34).
-- *modifiers* is a bit mask: 1 Shift, 2 Control, 4 Alt (Option), 8 Meta (Command or Windows key).
-- Shift, Control, Alt and Meta pressed alone are not reported; they appear only in the *modifiers* of other keys.
-- Text composed through an input method is reported as one down and one up for each character produced, with *modifiers* 0.
-- Keys carry no drawing number. Focus is the server's business.
-
-### Transport
-
-The client and server speak over one websocket.
-
-- **Protocol name.** The client requests the websocket subprotocol `regis.v2`, and the server accepts only that. This is a check that both ends are the same version, not a negotiation: there is nothing else to choose.
-- **Authentication and session identity** are part of the websocket handshake, set by the platform, and are outside the language.
-- **Server to client:** binary messages. Their bytes, concatenated, are the stream a terminal would receive on its line. Message boundaries carry no meaning for parsing: a command, a string or a definition may span messages.
-- **ReGIS mode:** the server enters it once, with the 7-bit device control string introducer `ESC P 0 p`, as its first bytes after the connection opens, and stays in it. Leaving and re-entering is allowed and behaves as stated under Commit and repaint. Bytes outside ReGIS mode are handled as the renderer handles them today.
-- **Presentation:** the client presents a frame at each commit. Base drawing, which is immediate, is presented once the client has processed every byte of the current websocket message, so a message full of base commands produces one frame.
-- **Client to server:** text messages, each holding one or more complete message lines as defined above. A line never spans two websocket messages.
-
 ### Failed commits
 
-A failed commit cannot happen when the server works correctly, because the server checks every batch with the same rules, caps and code before sending it. A failure therefore means the two have diverged. The client does not report it in a message. It discards the batch, leaves the screen as it was, and closes the websocket with close code 4000 plus the failure code, and with *n* as the close reason. The server logs this as a fault and the session follows the reconnect path: the client reconnects, starts empty, and the server resends the scene. Closing the connection is the only way the client signals a fault.
+A failed commit cannot happen when the sender works correctly, because a sender can check every batch with the same rules, caps and code before sending it (the validator). A failure therefore means the two have diverged. The renderer discards the batch, leaves the screen as it was, and reports the failure code and *n* to its caller. What the caller does with it is outside the language.
 
-| Code | Meaning | *n*, the close reason |
+| Code | Meaning | *n* |
 | --- | --- | --- |
 | 1 | Stored contents cap exceeded | The drawing being defined |
 | 2 | Staged operations cap exceeded | 0 |
@@ -267,11 +224,11 @@ There is no garbage collection. Lifetimes are explicit and memory is bounded by 
 
 **Lifetime**
 
-- A numbered drawing lives from creation, by define or set, until delete, delete all, terminal reset or the end of the session. Hiding does not free it.
+- A numbered drawing lives from creation, by define or set, until delete, delete all or terminal reset. Hiding does not free it.
 - Redefining or deleting releases the old contents when the commit succeeds, not when the operation is received.
 - Deleting a parent deletes its current children. A drawing moved to another parent beforehand survives.
 
-* A terminal reset or a new connection clears everything: numbered drawings, the staged batch, the committed table copy and the revision.
+* A terminal reset clears everything: numbered drawings, the staged batch, the committed table copy and the commit count.
 
 **References**
 
@@ -281,9 +238,9 @@ There is no garbage collection. Lifetimes are explicit and memory is bounded by 
 
 **Bounds**
 
-- Five caps: number of drawings, total bytes of stored contents, bytes of staged operations awaiting commit, chain depth, and rendering work per repaint. A commit that would exceed a cap is rejected whole and the client closes the connection.
-- No pixels are kept per drawing. The client holds contents as text plus fixed-size bitmaps (base pages, screen, pick record), the staged batch, an off-screen frame and the committed table copy. Its memory is bounded by the contents cap, the staged cap and a constant.
-- An application that creates and never deletes reaches the cap and its commits are rejected. It cannot harm the client.
+- Five caps: number of drawings, total bytes of stored contents, bytes of staged operations awaiting commit, chain depth, and rendering work per repaint. A commit that would exceed a cap is rejected whole and the failure reported to the caller.
+- No pixels are kept per drawing. The renderer holds contents as text plus fixed-size bitmaps (base pages, screen, pick record), the staged batch, an off-screen frame and the committed table copy. Its memory is bounded by the contents cap, the staged cap and a constant.
+- An application that creates and never deletes reaches the cap and its commits are rejected. It cannot harm the renderer.
 
 Starting values, to be confirmed by measurement. They are derived from the platform proposal's figures: paintings of 30 to 150 KB, and a full repaint of a 53 to 88 KB painting in 27 to 53 ms (roughly 0.5 to 0.6 ms per KB).
 
@@ -291,16 +248,15 @@ Starting values, to be confirmed by measurement. They are derived from the platf
 | --- | --- | --- |
 | Drawings | 65,535 | Fixed by the number range |
 | Stored contents | 4 MB | About 25 times the largest measured painting |
-| Staged operations | 8 MB | A resend on reconnect is one commit holding the whole scene: the contents plus up to about 3.4 MB of wrappers and attributes (65,535 drawings at roughly 50 bytes each) |
+| Staged operations | 8 MB | Sending a whole scene at once is one commit holding: the contents plus up to about 3.4 MB of wrappers and attributes (65,535 drawings at roughly 50 bytes each) |
 | Chain depth | 16 | Parent and source links counted together: the nesting reached while drawing. Matches v1 macrograph nesting |
 | Rendering work | 100,000,000 work units per full rebuild | Bytes are a poor measure: a few bytes can fill a large circle or draw size-16 text, so the cap is in the renderer's own work units (pixels visited). Measured on the corpus (14 November 2026, M1 Mac mini): full paintings take 12 to 19 million units at the median and 67 million at most (a 274 KB painting); dashboard and game screens take 2 to 4 million. Rendering runs at about 0.7 million units per millisecond, so the cap covers every measured picture with half again in hand and bounds a full rebuild at about 140 ms on that machine. A drawing's work is metered independent of position and clipping, so it is a fixed number per definition. A reused drawing counts each time it is drawn, and macrograph calls count expanded |
 
 Hidden drawings cost storage but no rendering work.
 
-**Server**
+**Checking before sending**
 
-- The server's copy follows the same rules and caps, so it rejects an over-limit commit before sending. It computes rendering work with the same crate as the client, once per definition, and sums it over visible uses; a separate calculation would drift and cause spurious failures. A client closing with a failure code therefore means the two disagree; the server logs it, and the reconnect resends everything. There is no resynchronisation protocol: recovery is the ordinary reconnect. The revision counter on input events exists only so the server can discard events aimed at drawings that have since changed.
-- It keeps no history of base drawing. It keeps both copies of the loaded sets and macrographs: the committed copy and the current one. On reconnect the client starts empty; the server resends the committed copy, all numbered drawings and a commit, then the palette and any table changes made since that commit. After a client disconnects, the server keeps the session for a configurable timeout, 60 seconds by default, then frees it.
+- A sender can check a batch with the validator, which is the renderer's own code and caps, so it rejects exactly what the renderer would. Rendering work is computed by the same code, once per definition, and summed over visible uses; a separate calculation would drift and cause spurious failures.
 
 ## Left out
 
@@ -318,7 +274,7 @@ Each of these was considered and excluded, either because an existing mechanism 
 | Binary encoding | A second encoding of the same thing |
 | New primitives, pattern libraries, new coordinate system | v1 already has arcs, interpolated curves ([chapter 6](https://vt100.net/docs/vt3xx-gp/chapter6.html)) and display addressing ([chapter 2](https://vt100.net/docs/vt3xx-gp/chapter2.html)) |
 | Client-side animation, bindings, parameterised drawings | Logic on the client |
-| Restoring the base picture on reconnect | Erase does not reset the colour map or cursor, so it would need the full history of base commands. v2 applications keep their background in a numbered drawing. |
+| Keeping the base picture in the scene | Erase does not reset the colour map or cursor, so rebuilding the base would need the full history of base commands. v2 applications keep their background in a numbered drawing. |
 
 The clip rectangle is the one item kept that v1 cannot do. It adds nothing that can be drawn; it limits where existing drawing appears, and panels and scrolling lists are not possible without it.
 
@@ -329,21 +285,16 @@ Four tests gate the work, and none is traded for performance.
 1. **Compatibility.** Every existing renderer test produces the same pixels as before.
 2. **Repaint equivalence.** For random sequences of `D` operations and base drawing, the screen after incremental repaint equals a full rebuild from the base and all numbered drawings, in pixels and in the pick record. The sequences must mix parent changes, source redefinitions, complement writing, clipping and macrograph changes.
 3. **Isolation.** A numbered drawing produces the same pixels on a blank base whatever other drawings were defined or repainted before it.
-4. **Failed commit.** For each failure code, a commit that fails leaves the pixels, the pick record and the committed table copy exactly as they were, sends nothing, and closes the connection with the matching close code.
+4. **Failed commit.** For each failure code, a commit that fails leaves the pixels, the pick record and the committed table copy exactly as they were, and reports the matching failure code.
 
 ## Open decisions
 
 - [x] Clip rectangle kept, colour remap left out. Confirmed 14 November 2026.
-- [x] Disconnect timeout: 60 seconds by default, configurable.
 - [x] Cap values: starting figures set in Lifetime and memory, to be confirmed by measurement.
-- [x] The client sends nothing but input events. A failed commit closes the connection with a close code, and recovery is the ordinary reconnect; there is no failure message and no resynchronisation protocol. v1 report replies are not sent. Decided 14 November 2026.
+- [x] Transport, input messages and server behaviour are out of scope: this document covers the language and the renderer only. A failed commit changes nothing and is reported to the caller with its code. Decided 15 November 2026.
 - [x] Rendering work budget: 100,000,000 work units per full rebuild, from corpus measurements (see Lifetime and memory).
 - [x] Grammar checked against the renderer's lexer: letters are case-insensitive, spaces and control characters are ignored, a semicolon resynchronises outside strings, and `D(E)` is found by the v1 lexer, which also keeps it out of `L` hexadecimal data.
-- [x] Grammar and message formats fixed; no longer a draft. Wheel message and key definitions added.
-- [x] Websocket framing: subprotocol `regis.v2`, binary stream from server to client with no meaning in message boundaries, ReGIS mode entered once at connection, text lines from client to server (see Transport).
-- [x] Key codes: Unicode scalar values for character keys, negative codes for the rest, a four-bit modifier mask (see Keys).
-- [x] Mouse-wheel message: needed, because scrolling is the application's work and it must know which panel the wheel is over.
-- [x] Movement rate: 60 a second per pointer, latest position only.
+- [x] Grammar fixed; no longer a draft.
 
 All decisions are made. Every figure marked as a starting value is confirmed or changed by measurement during implementation.
 
