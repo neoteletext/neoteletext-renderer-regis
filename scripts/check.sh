@@ -31,7 +31,7 @@ readonly VT340_ROM="${VT340_ROM:-$HOME/devel/teletext-reference/ReGIS/vt340-firm
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root (DEVELOPMENT.md section 6). Every
 # crate root must be listed.
-readonly NO_PANIC_ROOTS=(crates/regis/src/lib.rs crates/regis-render/src/main.rs crates/regis-minify/src/lib.rs crates/regis-minify/src/main.rs)
+readonly NO_PANIC_ROOTS=(crates/regis/src/lib.rs crates/regis-fonts/src/lib.rs crates/regis-render/src/main.rs crates/regis-minify/src/lib.rs crates/regis-minify/src/main.rs)
 
 check_no_panic_lists() {
     step "the no-panic lint list is the same in every crate root"

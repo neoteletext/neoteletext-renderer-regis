@@ -1,0 +1,11 @@
+[package]
+name = "regis-fonts"
+version = "0.1.0"
+description = "The fonts this repository makes, as text for regis::Font::parse: for programs that build the renderer in and cannot read a font file"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

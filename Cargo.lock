@@ -7,6 +7,10 @@ name = "regis"
 version = "0.1.0"
 
 [[package]]
+name = "regis-fonts"
+version = "0.1.0"
+
+[[package]]
 name = "regis-minify"
 version = "0.1.0"
 dependencies = [
