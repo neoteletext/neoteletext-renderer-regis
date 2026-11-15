@@ -410,3 +410,12 @@ fn a_terminal_and_a_validator_can_be_handed_to_another_thread() {
     sendable::<regis::Validator>();
     sendable::<Picture>();
 }
+
+#[test]
+fn the_terminal_says_what_drawing_on_the_base_cost() {
+    let (terminal, ..) = run(b"P[0,0]V[99,0]");
+    assert_eq!(terminal.base_work(), 100, "a point for each pixel of the line");
+    let (terminal, .., picture) = run(b"D(B1)V[0,0][99,0]D(E)D(C)");
+    assert_eq!(terminal.base_work(), 0, "numbered drawings are not drawn on the base");
+    assert!(picture.work() >= 100);
+}

@@ -92,6 +92,15 @@ impl Terminal {
         self.scene.commits() != 0 || self.scene.any_committed()
     }
 
+    /// The work units drawing outside numbered drawings has cost since the
+    /// terminal began: the pixels visited, as the allowance counts them.
+    /// What painting the numbered drawings cost is each picture's
+    /// ([`Picture::work`]).
+    #[must_use]
+    pub const fn base_work(&self) -> u64 {
+        self.base.machine.work.spent()
+    }
+
     /// The count of ReGIS v2 commits applied; it wraps to 0.
     #[must_use]
     pub const fn commits(&self) -> u32 {

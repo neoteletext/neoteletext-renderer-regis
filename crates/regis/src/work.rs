@@ -11,16 +11,18 @@ use crate::limits::{WORK_CAP, WORK_PER_BYTE};
 pub(crate) struct Work {
     left: u64,
     exhausted: bool,
+    /// Every unit paid since the start, for a caller that reports it.
+    spent: u64,
 }
 
 impl Work {
     pub(crate) const fn new() -> Self {
-        Self { left: WORK_CAP, exhausted: false }
+        Self { left: WORK_CAP, exhausted: false, spent: 0 }
     }
 
     /// An allowance of exactly `units`, for painting a numbered drawing.
     pub(crate) const fn with(units: u64) -> Self {
-        Self { left: units, exhausted: false }
+        Self { left: units, exhausted: false, spent: 0 }
     }
 
     /// The units not yet spent.
@@ -38,11 +40,17 @@ impl Work {
     pub(crate) fn spend(&mut self, units: u64) -> bool {
         if let Some(left) = self.left.checked_sub(units) {
             self.left = left;
+            self.spent = self.spent.saturating_add(units);
             true
         } else {
             self.exhausted = true;
             false
         }
+    }
+
+    /// The units paid since the start.
+    pub(crate) const fn spent(&self) -> u64 {
+        self.spent
     }
 
     /// Whether a spend was refused since this was last asked; clears the mark.
