@@ -1,9 +1,9 @@
 //! Painting the committed scene over the base picture
 //! (`docs/regis-v2.md`, "Attributes", "Rules for contents" and "Picking").
 
-use super::Scene;
 use super::picture::Picture;
 use super::stage::Stage;
+use super::{Scene, ViewerState};
 use crate::limits::{DRAWING_BYTE_COST, DRAWING_VISIT_COST, MAX_DRAWING_DEPTH, MAX_REBUILD_WORK};
 use crate::palette::Palette;
 use crate::surface::{Canvas, Screen, Window};
@@ -83,9 +83,34 @@ impl Scene {
         let place = Place { x: 0, y: 0, clip: screen, pick: 0, reused: false };
         let mut work = 0_u64;
         for number in self.committed.children(0) {
-            paint(&self.committed, &mut self.player, picture, number, place, false, MAX_DRAWING_DEPTH, &mut work);
+            let walk = Walk { stage: &self.committed, viewer: self.viewer };
+            paint(walk, &mut self.player, picture, number, place, false, MAX_DRAWING_DEPTH, &mut work);
         }
         picture.end(self.commits, work);
+    }
+}
+
+/// What is being painted: the drawings, and what the viewer's pointer is
+/// doing to them.
+#[derive(Clone, Copy)]
+struct Walk<'a> {
+    stage: &'a Stage,
+    viewer: ViewerState,
+}
+
+impl Walk<'_> {
+    /// The drawing painted in place of a drawing's contents, 0 for its
+    /// own: its pressed look while it is pressed, its hover look while it
+    /// is hovered, and its source otherwise (`docs/regis-v2.md`, "Viewer
+    /// state"). A look that does not exist leaves the ordinary look. A
+    /// drawing painted as another's source or look is not itself the
+    /// drawing under the pointer, so its own looks are not used.
+    fn shown(self, number: u16, drawing: &super::stage::Drawing, as_source: bool) -> u16 {
+        let look =
+            |named: u16, look: u16| (!as_source && named == number && self.stage.get(look).is_some()).then_some(look);
+        look(self.viewer.pressed, drawing.pressed)
+            .or_else(|| look(self.viewer.hovered, drawing.hover))
+            .unwrap_or(drawing.source)
     }
 }
 
@@ -94,7 +119,7 @@ impl Scene {
 /// detectable flag are then not used.
 #[allow(clippy::too_many_arguments, reason = "the walk's whole state; a struct would only rename the arguments")]
 fn paint(
-    stage: &Stage,
+    walk: Walk<'_>,
     player: &mut Interpreter,
     picture: &mut Picture,
     number: u16,
@@ -103,6 +128,7 @@ fn paint(
     depth: usize,
     work: &mut u64,
 ) {
+    let stage = walk.stage;
     let Some(drawing) = stage.get(number) else { return };
     // The commit checked depth and work; these stop a fault there from
     // becoming unbounded painting.
@@ -111,7 +137,7 @@ fn paint(
         return;
     }
     if !as_source {
-        if !drawing.visible {
+        if !drawing.visible || number == walk.viewer.hidden {
             return;
         }
         place.x = place.x.saturating_add(drawing.x);
@@ -132,7 +158,8 @@ fn paint(
         );
     }
     *work = work.saturating_add(DRAWING_VISIT_COST);
-    if drawing.source == 0 {
+    let shown = walk.shown(number, drawing, as_source);
+    if shown == 0 {
         let window = Window {
             dx: place.x,
             dy: place.y,
@@ -148,9 +175,9 @@ fn paint(
         *work = work.saturating_add(spent);
     } else {
         let reused = Place { reused: true, ..place };
-        paint(stage, player, picture, drawing.source, reused, true, depth, work);
+        paint(walk, player, picture, shown, reused, true, depth, work);
     }
     for child in stage.children(number) {
-        paint(stage, player, picture, child, place, false, depth, work);
+        paint(walk, player, picture, child, place, false, depth, work);
     }
 }

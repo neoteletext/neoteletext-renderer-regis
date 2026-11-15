@@ -31,6 +31,11 @@ pub(super) struct Drawing {
     pub(super) parent: u16,
     /// The drawing painted in place of its contents, 0 for none.
     pub(super) source: u16,
+    /// The drawing painted in its place while the viewer's pointer is
+    /// over it, 0 for none.
+    pub(super) hover: u16,
+    /// The drawing painted in its place while it is pressed, 0 for none.
+    pub(super) pressed: u16,
     pub(super) detectable: bool,
     pub(super) clip: Option<Clip>,
 }
@@ -46,6 +51,8 @@ impl Default for Drawing {
             visible: true,
             parent: 0,
             source: 0,
+            hover: 0,
+            pressed: 0,
             detectable: false,
             clip: None,
         }
@@ -121,6 +128,8 @@ impl Stage {
             Attribute::Depth(depth) => drawing.depth = depth,
             Attribute::Visible(visible) => drawing.visible = visible,
             Attribute::Source(source) => drawing.source = source,
+            Attribute::Hover(hover) => drawing.hover = hover,
+            Attribute::Pressed(pressed) => drawing.pressed = pressed,
             Attribute::Detectable(detectable) => drawing.detectable = detectable,
             Attribute::Clip(clip) => drawing.clip = clip,
             Attribute::Parent(parent) => {

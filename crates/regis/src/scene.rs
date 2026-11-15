@@ -41,6 +41,24 @@ impl Tables {
     }
 }
 
+/// What the viewer's pointer is doing to the picture, as the program that
+/// shows it has found from its own pick record. It changes how numbered
+/// drawings are painted and is the caller's alone: no byte of the stream
+/// can read or set it (`docs/regis-v2.md`, "Viewer state").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ViewerState {
+    /// The drawing the pointer is over, 0 for none: it is painted with its
+    /// hover look, if it has one.
+    pub hovered: u16,
+    /// The drawing a button or a contact is pressed on, 0 for none: it is
+    /// painted with its pressed look, if it has one, which wins over the
+    /// hover look.
+    pub pressed: u16,
+    /// A drawing not painted, with its children, 0 for none: how a
+    /// receiver blinks a cursor the stream drew.
+    pub hidden: u16,
+}
+
 /// The operations waiting for a commit.
 #[derive(Debug)]
 struct Batch {
@@ -68,6 +86,7 @@ pub(crate) struct Scene {
     tables: Tables,
     /// Replays drawings' contents; it holds the committed tables.
     player: Interpreter,
+    viewer: ViewerState,
 }
 
 impl Scene {
@@ -83,7 +102,27 @@ impl Scene {
             commits: 0,
             tables: Tables::default(),
             player,
+            viewer: ViewerState::default(),
         }
+    }
+
+    /// Sets the viewer state. False when the picture certainly stays as it
+    /// is: no drawing named, before or after, is painted differently for
+    /// it.
+    pub(crate) fn set_viewer_state(&mut self, state: ViewerState) -> bool {
+        let old = core::mem::replace(&mut self.viewer, state);
+        let exists = |number: u16| number != 0 && self.committed.get(number).is_some();
+        let look = |number: u16, pick: fn(&stage::Drawing) -> u16| {
+            self.committed.get(number).is_some_and(|drawing| exists(pick(drawing)))
+        };
+        let hover = |number: u16| look(number, |drawing| drawing.hover);
+        let pressed = |number: u16| look(number, |drawing| drawing.pressed);
+        let hovered = old.hovered != state.hovered && (hover(old.hovered) || hover(state.hovered));
+        // Releasing a drawing with no pressed look uncovers its hover look.
+        let either = |number: u16| pressed(number) || hover(number);
+        let pressing = old.pressed != state.pressed && (either(old.pressed) || either(state.pressed));
+        let hiding = old.hidden != state.hidden && (exists(old.hidden) || exists(state.hidden));
+        hovered || pressing || hiding
     }
 
     pub(crate) fn set_font(&mut self, font: Font) {

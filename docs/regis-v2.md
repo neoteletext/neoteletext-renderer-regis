@@ -76,7 +76,7 @@ D(C)                                          commit
 
 ## Attributes
 
-Every numbered drawing has the same seven attributes.
+Every numbered drawing has the same nine attributes. The last two, added on 16 November 2026, take effect only through the viewer state (below).
 
 | Attribute | Meaning | Default |
 | --- | --- | --- |
@@ -87,6 +87,8 @@ Every numbered drawing has the same seven attributes.
 | Source | Another drawing to draw in place of its own contents, which are kept but not drawn | None |
 | Detectable | Whether pointer events report it | No |
 | Clip rectangle | It and its children appear only inside this rectangle, given relative to its own origin | None |
+| Hover look | Another drawing to draw in its place while the viewer's pointer is over it | None |
+| Pressed look | Another drawing to draw in its place while a button or a contact is pressed on it | None |
 
 - A child moves, hides and clips with its parent.
 - A drawing has exactly one parent. A change of parent applies to the staged scene at once and shows at commit; from then on it moves, hides and clips with the new parent, and is no longer deleted with the old one.
@@ -133,6 +135,21 @@ The renderer rebuilds the whole picture each time its caller asks for one: the b
 
 - **Presentation:** the renderer builds the committed picture apart from the base, in a picture the caller owns, and gives it with its pick record, its commit count and the work it cost as one frame. A commit is atomic on the visible screen as well as in the scene. The renderer says when a frame is wanted: an event at each commit applied, and a mark on the screen when base drawing changed it. A picture also says which rows differ from the one before.
 - **Staged batches** survive leaving and re-entering ReGIS mode. Only a definition left open is discarded.
+
+## Viewer state
+
+The program that shows the picture (the receiver) can change how drawings look according to what the viewer's pointer is doing, with no byte of ReGIS arriving and no message to the application. Added on 16 November 2026.
+
+- **The state** is three drawing numbers the receiver sets, each 0 for none: the *hovered* drawing, the *pressed* drawing and the *hidden* drawing. It is the receiver's alone: nothing in the stream can read or set it, so an application learns where the pointer is only through input.
+- **Hover look and pressed look:** while a drawing is the pressed drawing and its pressed look names a drawing that exists, that drawing is drawn in its place; otherwise, while it is the hovered drawing and its hover look names a drawing that exists, that one is. "In its place" means what it means for a source: at this drawing's position, under its clip rectangle, from a fresh context, followed by this drawing's own children. The pressed look wins. A look that names no existing drawing leaves the ordinary look.
+- **The hidden drawing** is not drawn, with its children, as if its visible attribute were 0. A receiver blinks a cursor the application drew by hiding it for half of each period.
+- **Only the drawing itself:** a drawing drawn as another's source or look does not use its own looks, since it is not the drawing under the pointer.
+- **Picking:** the pixels a look writes belong to the drawing it stands for, as a source's do. A look that covers fewer pixels than the ordinary look can therefore put the pointer outside the drawing it was over; give a look at least the ordinary look's pixels for a steady hover.
+- **References:** looks are links between drawings like sources: no drawing may reach itself through sources and looks in any mixture, and chains of them count toward the nesting cap of 16.
+- **Work:** the cap on one repaint holds whatever the viewer state. A commit counts, for each drawing, the dearest of its ordinary look, its hover look and its pressed look.
+- **A look is usually kept hidden** (`V0`), so that it is drawn only where it is named.
+
+Example: `D(S10(I1,H11,A12),S11(V0),S12(V0))` makes drawing 10 detectable, shows drawing 11 in its place while the pointer is over it and drawing 12 while it is pressed.
 
 ## Picking
 
@@ -198,6 +215,8 @@ This section fixes the syntax of `D`. It follows v1 conventions: options in pare
 | `P` | Parent | Drawing number, or 0 for none | 0 |
 | `R` | Source (reuse) | Drawing number, or 0 for none | 0 |
 | `I` | Detectable (input) | 0 or 1 | 0 |
+| `H` | Hover look | Drawing number, or 0 for none | 0 |
+| `A` | Pressed look (active) | Drawing number, or 0 for none | 0 |
 | `C` | Clip rectangle | `C(X<int>,Y<int>,W<int>,H<int>)`, or `C0` for none | None |
 
 - Attribute values are 16-bit signed integers, the size v1 uses for coordinates ([chapter 1](https://vt100.net/docs/vt3xx-gp/chapter1.html)).
@@ -317,6 +336,8 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
 7. **Not built:** damage repaint; every rebuild is a full one. The equivalence test therefore has nothing to compare yet.
 8. **The staged cap counts** the bytes of `D` commands and of definitions received since the last commit.
 9. **A validator keeps no pixels**: what the stream draws outside numbered drawings is read and not drawn.
+
+10. **Viewer state, added 16 November 2026** (DEC-6366, REQ-6367): the hover look and pressed look attributes, `H` and `A`, and the hovered, pressed and hidden drawings a receiver sets (`Terminal::set_viewer_state`). The proposal had no receiver-drawn response to the pointer.
 
 The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
 

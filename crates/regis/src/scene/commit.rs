@@ -22,20 +22,19 @@ enum Seen {
     Depth(usize),
 }
 
-/// The drawings painted as part of painting `number`: its source, if that
-/// exists, and its children.
+/// The drawings that may be painted as part of painting `number`: its
+/// children, and its source, hover look and pressed look where they exist.
 fn nested(stage: &Stage, number: u16) -> Vec<u16> {
     let mut nested = stage.children(number);
-    if let Some(source) = stage.get(number).map(|drawing| drawing.source)
-        && stage.get(source).is_some()
-    {
-        nested.push(source);
+    if let Some(drawing) = stage.get(number) {
+        let named = [drawing.source, drawing.hover, drawing.pressed];
+        nested.extend(named.into_iter().filter(|other| stage.get(*other).is_some()));
     }
     nested
 }
 
-/// Checks that no drawing is reached from itself through parent and source
-/// links, and that none nests deeper than the cap. The walk keeps its own
+/// Checks that no drawing is reached from itself through parent, source,
+/// hover look and pressed look links, and that none nests deeper than the cap. The walk keeps its own
 /// stack, at most one entry deeper than the cap.
 fn check_nesting(stage: &Stage) -> Result<(), Failure> {
     let mut seen: BTreeMap<u16, Seen> = BTreeMap::new();
@@ -161,22 +160,31 @@ impl Scene {
         Ok(())
     }
 
-    /// The work of painting one drawing where it is used: itself, its
-    /// contents or its source, and its visible children. A source counts
-    /// each time it is used. The nesting check has bounded `depth`.
+    /// The most painting one drawing can cost where it is used, whatever
+    /// the viewer state: itself, the dearest of its ordinary look (its
+    /// contents or its source), its hover look and its pressed look, and
+    /// its visible children. A source or a look counts each time it is
+    /// used. The nesting check has bounded `depth`.
     fn cost(&mut self, number: u16, costs: &mut BTreeMap<u16, u64>, depth: usize) -> Result<u64, Failure> {
         if let Some(cost) = costs.get(&number) {
             return Ok(*cost);
         }
         let Some(depth) = depth.checked_sub(1) else { return Err((CommitError::Depth, number)) };
-        let Some(source) = self.staged.get(number).map(|drawing| drawing.source) else { return Ok(0) };
-        let mut cost = DRAWING_VISIT_COST;
-        cost = cost.saturating_add(match source {
+        let Some(drawing) = self.staged.get(number) else { return Ok(0) };
+        let (source, looks) = (drawing.source, [drawing.hover, drawing.pressed]);
+        let mut shown = match source {
             0 => self.contents_work(number)?,
             // A source that does not exist draws nothing.
             source if self.staged.get(source).is_none() => 0,
             source => self.cost(source, costs, depth)?,
-        });
+        };
+        for look in looks {
+            // A look that does not exist leaves the ordinary look.
+            if self.staged.get(look).is_some() {
+                shown = shown.max(self.cost(look, costs, depth)?);
+            }
+        }
+        let mut cost = DRAWING_VISIT_COST.saturating_add(shown);
         for child in self.staged.children(number) {
             if self.staged.get(child).is_some_and(|drawing| drawing.visible) {
                 cost = cost.saturating_add(self.cost(child, costs, depth)?);

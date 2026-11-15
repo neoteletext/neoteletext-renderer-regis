@@ -28,6 +28,10 @@ pub(crate) enum Attribute {
     Visible(bool),
     Parent(u16),
     Source(u16),
+    /// The drawing painted in its place while it is hovered, 0 for none.
+    Hover(u16),
+    /// The drawing painted in its place while it is pressed, 0 for none.
+    Pressed(u16),
     Detectable(bool),
     Clip(Option<Clip>),
 }
@@ -218,7 +222,7 @@ impl Machine {
     /// A token inside `D(S n(...))`.
     pub(super) fn drawing_attribute(&mut self, token: &Token) {
         match *token {
-            Token::Letter(letter @ (b'X' | b'Y' | b'L' | b'V' | b'P' | b'R' | b'I' | b'C')) => {
+            Token::Letter(letter @ (b'X' | b'Y' | b'L' | b'V' | b'P' | b'R' | b'H' | b'A' | b'I' | b'C')) => {
                 self.syntax.set_option_letter(letter);
             }
             Token::Number(number) => {
@@ -234,6 +238,9 @@ impl Machine {
                     b'I' => flag(number).map(Attribute::Detectable),
                     b'P' => drawing_reference(number).map(Attribute::Parent),
                     b'R' => drawing_reference(number).map(Attribute::Source),
+                    b'H' => drawing_reference(number).map(Attribute::Hover),
+                    // `A` for active: `P` is the parent.
+                    b'A' => drawing_reference(number).map(Attribute::Pressed),
                     b'C' if number.wide() == 0 => Some(Attribute::Clip(None)),
                     _ => None,
                 };

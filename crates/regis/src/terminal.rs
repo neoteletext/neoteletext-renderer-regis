@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use crate::event::Event;
 use crate::font::Font;
 use crate::palette::Palette;
-use crate::scene::{Picture, Scene};
+use crate::scene::{Picture, Scene, ViewerState};
 use crate::surface::Screen;
 pub(crate) use source::Interpreter;
 use stream::{Step, Stream};
@@ -105,6 +105,16 @@ impl Terminal {
     #[must_use]
     pub const fn commits(&self) -> u32 {
         self.scene.commits()
+    }
+
+    /// Says what the viewer's pointer is doing to the picture: which
+    /// drawing it is over, which is pressed, and which the caller has
+    /// hidden (`docs/regis-v2.md`, "Viewer state"). The next
+    /// [`Terminal::compose`] paints accordingly. It returns false when the
+    /// picture certainly stays as it is, so that a caller composes only
+    /// when there may be something new to show.
+    pub fn set_viewer_state(&mut self, state: ViewerState) -> bool {
+        self.scene.set_viewer_state(state)
     }
 
     /// Makes the picture to show: the displayed page of `base`, the screen
