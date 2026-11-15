@@ -93,6 +93,9 @@ impl Scene {
         let result = self.check(batch.as_ref().and_then(|batch| batch.failure), staged_bytes, base);
         match result {
             Ok(tables) => {
+                if tables != self.tables {
+                    self.tables_version = self.tables_version.wrapping_add(1);
+                }
                 self.tables = tables;
                 self.committed = self.staged.clone();
                 self.commits = self.commits.wrapping_add(1);
@@ -130,7 +133,7 @@ impl Scene {
         // every drawing's work is measured again.
         let tables = Tables::of(base);
         if tables != self.tables {
-            self.staged.forget_work();
+            self.staged.forget_measurements();
             self.player.machine.macrographs.clone_from(&tables.macrographs);
             self.player.machine.characters.sets.clone_from(&tables.sets);
         }
@@ -200,14 +203,14 @@ impl Scene {
     /// The work a drawing's own contents cost, measured once.
     fn contents_work(&mut self, number: u16) -> Result<u64, Failure> {
         let Some(drawing) = self.staged.get(number) else { return Ok(0) };
-        if let Some(work) = drawing.work {
-            return Ok(work);
+        if let Some(measured) = drawing.measured {
+            return Ok(measured.work);
         }
         let contents = drawing.contents.clone();
-        let work = self.measure(&contents).ok_or((CommitError::Work, 0))?;
+        let measured = self.measure(&contents).ok_or((CommitError::Work, 0))?;
         if let Some(drawing) = self.staged.get_mut(number) {
-            drawing.work = Some(work);
+            drawing.measured = Some(measured);
         }
-        Ok(work)
+        Ok(measured.work)
     }
 }

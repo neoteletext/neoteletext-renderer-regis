@@ -84,6 +84,10 @@ pub(crate) struct Scene {
     commits: u32,
     /// The committed copy of the shared tables.
     tables: Tables,
+    /// Counts the changes to what every drawing's pixels depend on beside
+    /// its own contents: the committed tables and the font. A picture
+    /// painted under another count is repainted whole.
+    tables_version: u64,
     /// Replays drawings' contents; it holds the committed tables.
     player: Interpreter,
     viewer: ViewerState,
@@ -101,6 +105,7 @@ impl Scene {
             capture: None,
             commits: 0,
             tables: Tables::default(),
+            tables_version: 0,
             player,
             viewer: ViewerState::default(),
         }
@@ -127,6 +132,10 @@ impl Scene {
 
     pub(crate) fn set_font(&mut self, font: Font) {
         self.player.machine.set_font(font);
+        // Where text reaches depends on the shapes of its characters.
+        self.committed.forget_measurements();
+        self.staged.forget_measurements();
+        self.tables_version = self.tables_version.wrapping_add(1);
     }
 
     pub(crate) const fn commits(&self) -> u32 {

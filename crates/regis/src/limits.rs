@@ -52,6 +52,12 @@ pub const WORK_PER_BYTE: u64 = 256;
 /// Work units that can be saved up; also the allowance at start.
 pub const WORK_CAP: u64 = 16_000_000;
 
+/// The steps of painting (one drawing's contents replayed at one place) a
+/// picture keeps so that the next repaint can be partial; a scene of more
+/// is painted whole each time. At about 64 bytes a step, kept twice while
+/// two lists are compared, this is 2 MB.
+pub const MAX_DAMAGE_STEPS: usize = 16_384;
+
 /// The work units of repainting numbered drawings a receiver may spend on
 /// one picture each second ([`RepaintBudget`](crate::RepaintBudget)):
 /// twice [`MAX_REBUILD_WORK`], so a picture at the cap of one repaint is

@@ -14,15 +14,29 @@ use alloc::vec::Vec;
 
 use super::Scene;
 use crate::machine::{Attribute, Clip};
+use crate::surface::Bounds;
+
+/// A drawing's contents, shared between every state that holds them.
+pub(super) type Contents = Shared<[u8]>;
+
+/// What painting a drawing's contents was measured to take, under the
+/// committed tables.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Measured {
+    /// The work it costs, wherever the drawing is placed.
+    pub(super) work: u64,
+    /// The pixels it can write, relative to the drawing's origin and
+    /// before any clipping; `None` if it writes none.
+    pub(super) reach: Option<Bounds>,
+}
 
 /// A numbered drawing (`docs/regis-v2.md`, "Attributes").
 #[derive(Clone, Debug)]
 pub(super) struct Drawing {
     /// The ReGIS commands it holds, as received.
-    pub(super) contents: Shared<[u8]>,
-    /// The work its contents cost to paint under the committed tables,
-    /// once measured.
-    pub(super) work: Option<u64>,
+    pub(super) contents: Contents,
+    /// What its contents take to paint, once measured.
+    pub(super) measured: Option<Measured>,
     pub(super) x: i32,
     pub(super) y: i32,
     pub(super) depth: i32,
@@ -44,7 +58,7 @@ impl Default for Drawing {
     fn default() -> Self {
         Self {
             contents: Shared::from([]),
-            work: None,
+            measured: None,
             x: 0,
             y: 0,
             depth: 0,
@@ -91,10 +105,10 @@ impl Stage {
         self.drawings.iter().map(|(number, drawing)| (*number, drawing))
     }
 
-    /// Forgets every measured work: the shared tables changed.
-    pub(super) fn forget_work(&mut self) {
+    /// Forgets every measurement: the shared tables or the font changed.
+    pub(super) fn forget_measurements(&mut self) {
         for drawing in self.drawings.values_mut() {
-            drawing.work = None;
+            drawing.measured = None;
         }
     }
 
@@ -152,7 +166,7 @@ impl Stage {
         }
         self.bytes = bytes;
         drawing.contents = Shared::from(contents);
-        drawing.work = None;
+        drawing.measured = None;
         Some(())
     }
 

@@ -113,6 +113,10 @@ pub(crate) fn fill_polygon(painter: &mut Painter<'_>, vertices: &[Point]) -> boo
         return true;
     }
     let window = painter.window();
+    // The filled pixels and the outline all lie within the corners' box.
+    for vertex in vertices {
+        painter.reach(*vertex);
+    }
     // A numbered drawing pays for the whole polygon, seen or not, so its
     // work does not depend on where it is placed.
     if window.whole_cost && !Mask::whole_cost(vertices).is_some_and(|cost| painter.spend(cost)) {

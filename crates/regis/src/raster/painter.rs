@@ -73,6 +73,11 @@ impl<'a> Painter<'a> {
         } else {
             (at.x, at.y, top, bottom, left, right)
         };
+        // The run is clipped to the window below; its whole reach is noted.
+        for end in [moving, shade.at] {
+            let (x, y) = if shade.vertical { (end, fixed) } else { (fixed, end) };
+            self.canvas.reach(x, y);
+        }
         if window.whole_cost {
             // A numbered drawing pays for the whole run, seen or not, so
             // its work does not depend on where it is placed. Coordinates
@@ -127,6 +132,11 @@ impl<'a> Painter<'a> {
     /// Whether blank parts of a character cell change anything.
     pub(crate) const fn writes_off_pixels(&self) -> bool {
         self.ink.writes_off_pixels()
+    }
+
+    /// Notes a position a filled area may write, whatever the window.
+    pub(crate) fn reach(&mut self, at: Point) {
+        self.canvas.reach(at.x, at.y);
     }
 
     /// Where on the page drawing lands.

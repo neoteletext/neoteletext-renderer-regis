@@ -120,11 +120,17 @@ Two consequences:
 
 `D` operations are staged; nothing changes on screen until commit, and then everything changes at once. Operations apply in the order received to a staged copy of the scene, which replaces the visible scene at commit. In D(S5(P0),K3,C), where 5 was a child of 3, drawing 5 survives.
 
-The renderer rebuilds the whole picture each time its caller asks for one: the base, then every visible numbered drawing in depth order. The caller asks when a commit was applied or the base changed, and no more often than it shows frames, so commits that arrive faster than frames are merged and only the latest scene is painted. A full rebuild is the reference the equivalence test needs anyway, and it gives a measured baseline. Damage repaint comes second, is not built yet, and would repaint only what changed:
+The renderer makes the picture each time its caller asks for one: the base, then every visible numbered drawing in depth order. The caller asks when a commit was applied, the base changed or the viewer state changed, and no more often than its repaint budget allows, so commits that arrive faster than frames are merged into one repaint. A picture the renderer painted before is repainted only where it changed (damage repaint, built 16 November 2026):
 
-1. Works out the damaged area: the old and new bounds of every changed drawing.
+1. Lays the scene out as a list of steps, each one drawing's contents replayed at one place, and compares it with the list the picture was last painted from. The damaged area is one rectangle: it holds where the base's pixels differ and everything the steps that differ can write, before and after.
 2. Copies the base pixels into that area.
-3. Redraws the numbered drawings that intersect it, in depth order, writing only pixels inside the damage.
+3. Replays the steps that can write inside it, in depth order, writing only pixels inside the damage and paying only for that part.
+
+- **How far a drawing reaches** is measured once at its commit, with its work: the rectangle of every position its contents write, before clipping and wherever it is placed.
+- **Which steps differ:** the lists are matched from their starts and from their ends; every step between is taken as changed. A drawing that moved, changed, appeared or vanished, and every drawing that uses it as a source or a look, falls between.
+- **A partial repaint costs what was repainted**, and a picture in which nothing changed costs only the walk over its drawings.
+- **A scene of more than 16,384 steps** is painted whole each time.
+- **Measured** (16 November 2026, chunko, release build): moving a square of 20 pixels over a filled screen, 30 microseconds against 4.2 milliseconds painted whole; 9,337 work units against 783,497.
 
 - **Required property:** the result is identical, pixel for pixel, to rebuilding the whole screen from the base and all numbered drawings.
 - **Drawing on the base** takes effect immediately, as in v1. If numbered drawings lie over the affected area, they are repainted on top. The renderer need only bring the screen up to date before it next presents a frame, so a long run of base commands does not cause a repaint for each one.
@@ -343,7 +349,7 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
 4. **Nesting is counted as painting nests.** A drawing nests its source and its children; the cap of 16 and the search for rings follow those links. A drawing whose parent names it as a source is not a ring, because painting it ends: the ring is a drawing that reaches itself by being painted.
 5. **`D` inside a polygon fill is not recognised**, as no command but `V`, `C`, `P` and `W` is; nor is `D(E)` inside any parenthesis when a definition is being received.
 6. **A background colour set by `S(I)` does not reach a drawing**, since `S` has no effect inside one and each starts from a fresh context: replace and erase writing inside a drawing write colour 0.
-7. **Not built:** damage repaint; every rebuild is a full one. The equivalence test therefore has nothing to compare yet.
+7. **Damage repaint was built on 16 November 2026** (REQ-6329), a day after the rest, as one rectangle found by comparing lists of painting steps; the proposal's bounds of each changed drawing are the steps' areas. The equivalence test is `crates/regis/tests/damage.rs`.
 8. **The staged cap counts** the bytes of `D` commands and of definitions received since the last commit.
 9. **A validator keeps no pixels**: what the stream draws outside numbered drawings is read and not drawn.
 

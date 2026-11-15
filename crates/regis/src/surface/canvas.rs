@@ -62,6 +62,70 @@ impl Window {
     }
 }
 
+/// A rectangle of pixels, both ends included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Bounds {
+    pub(crate) left: i32,
+    pub(crate) top: i32,
+    pub(crate) right: i32,
+    pub(crate) bottom: i32,
+}
+
+impl Bounds {
+    /// The whole page.
+    pub(crate) fn page() -> Self {
+        Self {
+            left: 0,
+            top: 0,
+            right: Canvas::width_i32().saturating_sub(1),
+            bottom: Canvas::height_i32().saturating_sub(1),
+        }
+    }
+
+    const fn point(x: i32, y: i32) -> Self {
+        Self { left: x, top: y, right: x, bottom: y }
+    }
+
+    /// The smallest rectangle holding both.
+    pub(crate) fn with(self, other: Self) -> Self {
+        Self {
+            left: self.left.min(other.left),
+            top: self.top.min(other.top),
+            right: self.right.max(other.right),
+            bottom: self.bottom.max(other.bottom),
+        }
+    }
+
+    /// The smallest rectangle holding both, either of which may be empty.
+    pub(crate) fn join(one: Option<Self>, other: Option<Self>) -> Option<Self> {
+        match (one, other) {
+            (Some(one), Some(other)) => Some(one.with(other)),
+            (one, other) => one.or(other),
+        }
+    }
+
+    /// The pixels in both, if any.
+    pub(crate) fn within(self, other: Self) -> Option<Self> {
+        let both = Self {
+            left: self.left.max(other.left),
+            top: self.top.max(other.top),
+            right: self.right.min(other.right),
+            bottom: self.bottom.min(other.bottom),
+        };
+        (both.left <= both.right && both.top <= both.bottom).then_some(both)
+    }
+
+    /// Moved by an offset.
+    pub(crate) const fn moved(self, dx: i32, dy: i32) -> Self {
+        Self {
+            left: self.left.saturating_add(dx),
+            top: self.top.saturating_add(dy),
+            right: self.right.saturating_add(dx),
+            bottom: self.bottom.saturating_add(dy),
+        }
+    }
+}
+
 /// One 800 by 480 graphics page. Each pixel is a colour-map address, 0 to 15.
 /// Two pages are equal when their pixels are.
 #[derive(Clone, Debug)]
@@ -74,6 +138,11 @@ pub struct Canvas {
     pick: Vec<u16>,
     /// Whether a pixel was written since this was last asked.
     changed: bool,
+    /// Every position drawing reaches is being noted in `reach`.
+    measuring: bool,
+    /// The positions drawing has reached while measuring, in the
+    /// coordinates drawing uses, on the page or off it.
+    reach: Option<Bounds>,
 }
 
 impl PartialEq for Canvas {
@@ -94,13 +163,27 @@ impl Canvas {
     /// A page with every pixel at colour-map address 0.
     #[must_use]
     pub fn new() -> Self {
-        Self { pixels: vec![0; Self::area()], window: Window::page(), pick: Vec::new(), changed: false }
+        Self {
+            pixels: vec![0; Self::area()],
+            window: Window::page(),
+            pick: Vec::new(),
+            changed: false,
+            measuring: false,
+            reach: None,
+        }
     }
 
     /// A page with no pixel memory: drawing on it does nothing. The second
     /// page of a composed picture, which numbered drawings never draw on.
     pub(crate) fn absent() -> Self {
-        Self { pixels: Vec::new(), window: Window::page(), pick: Vec::new(), changed: false }
+        Self {
+            pixels: Vec::new(),
+            window: Window::page(),
+            pick: Vec::new(),
+            changed: false,
+            measuring: false,
+            reach: None,
+        }
     }
 
     pub(crate) const fn window(&self) -> Window {
@@ -109,6 +192,55 @@ impl Canvas {
 
     pub(crate) const fn set_window(&mut self, window: Window) {
         self.window = window;
+    }
+
+    /// Starts noting every position drawing reaches, whether or not it
+    /// lies in the window: how a numbered drawing's extent is measured.
+    pub(crate) const fn measure_reach(&mut self) {
+        self.measuring = true;
+        self.reach = None;
+    }
+
+    /// Stops noting; the rectangle of the positions reached, in the
+    /// coordinates drawing uses, or `None` if there were none.
+    pub(crate) const fn take_reach(&mut self) -> Option<Bounds> {
+        self.measuring = false;
+        self.reach.take()
+    }
+
+    /// Notes a position drawing may write, before the window cuts it.
+    /// Shading and filling clip their runs to the window before writing,
+    /// so they note the ends of what they would cover themselves.
+    pub(crate) fn reach(&mut self, x: i32, y: i32) {
+        if self.measuring {
+            self.reach = Bounds::join(self.reach, Some(Bounds::point(x, y)));
+        }
+    }
+
+    /// Puts back another page's pixels inside a rectangle and forgets the
+    /// pick record there: the start of repainting that rectangle.
+    pub(crate) fn restore(&mut self, other: &Self, area: Bounds) {
+        let Some(area) = area.within(Bounds::page()) else { return };
+        let width = to_usize(Self::width_i32());
+        let columns = to_usize(area.left)..to_usize(area.right).saturating_add(1);
+        for row in to_usize(area.top)..=to_usize(area.bottom) {
+            let start = row.saturating_mul(width);
+            let span = start.saturating_add(columns.start)..start.saturating_add(columns.end);
+            if let (Some(to), Some(from)) = (self.pixels.get_mut(span.clone()), other.pixels.get(span.clone())) {
+                to.copy_from_slice(from);
+            }
+            if let Some(picks) = self.pick.get_mut(span) {
+                picks.fill(0);
+            }
+        }
+    }
+
+    /// Forgets a pick record that names no drawing, so that it is empty
+    /// exactly when no detectable drawing has a pixel.
+    pub(crate) fn tidy_pick(&mut self) {
+        if self.pick.iter().all(|drawing| *drawing == 0) {
+            self.pick.clear();
+        }
     }
 
     /// Replaces every pixel with another page's and forgets the pick record.
@@ -179,6 +311,7 @@ impl Canvas {
     /// Changes one pixel through `change`; positions outside the window do
     /// nothing.
     pub(crate) fn update(&mut self, x: i32, y: i32, change: impl FnOnce(u8) -> Option<u8>) {
+        self.reach(x, y);
         let window = self.window;
         let (x, y) = (x.saturating_add(window.dx), y.saturating_add(window.dy));
         if x < window.left || x > window.right || y < window.top || y > window.bottom {

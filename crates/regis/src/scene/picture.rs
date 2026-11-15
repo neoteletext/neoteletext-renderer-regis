@@ -4,8 +4,21 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
+use super::paint::Step;
 use crate::convert::{to_i32, to_usize};
-use crate::surface::{Canvas, Screen, Window};
+use crate::palette::Palette;
+use crate::surface::{Bounds, Canvas, Screen, Window};
+
+/// What a picture was painted from, kept so that the next one repaints
+/// only what changed.
+#[derive(Clone, Debug)]
+pub(super) struct Painted {
+    pub(super) steps: Vec<Step>,
+    /// The base's pixels.
+    pub(super) base: Vec<u8>,
+    pub(super) palette: Palette,
+    pub(super) tables_version: u64,
+}
 
 /// What lies under one position of a [`Picture`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,8 +42,10 @@ pub struct Pick {
 #[derive(Clone, Debug)]
 pub struct Picture {
     screen: Screen,
-    /// The pixels of the picture before this one, to tell what changed.
+    /// The pixels the rows being repainted held before, to tell what
+    /// changed.
     previous: Vec<u8>,
+    pub(super) painted: Option<Painted>,
     /// The screen position of each detectable drawing painted.
     origins: BTreeMap<u16, (i32, i32)>,
     commits: u32,
@@ -51,6 +66,7 @@ impl Picture {
         Self {
             screen: Screen::single(),
             previous: Vec::new(),
+            painted: None,
             origins: BTreeMap::new(),
             commits: 0,
             work: 0,
@@ -105,9 +121,10 @@ impl Picture {
         self.commits
     }
 
-    /// The work units painting the numbered drawings cost: the pixels
-    /// visited, 64 for each byte of contents replayed and 64 for each
-    /// drawing painted.
+    /// The work units making this picture cost: 64 for each drawing
+    /// visited, and for each drawing repainted the pixels visited and 64
+    /// for each byte of contents replayed. A picture repainted in part
+    /// costs what was repainted.
     #[must_use]
     pub const fn work(&self) -> u64 {
         self.work
@@ -124,30 +141,57 @@ impl Picture {
         &mut self.screen
     }
 
-    pub(super) fn note_origin(&mut self, drawing: u16, x: i32, y: i32) {
-        self.origins.insert(drawing, (x, y));
+    /// The pixels of the rows a rectangle spans.
+    fn rows(&self, area: Bounds) -> &[u8] {
+        let width = to_usize(Canvas::width_i32());
+        let rows =
+            to_usize(area.top).saturating_mul(width)..to_usize(area.bottom).saturating_add(1).saturating_mul(width);
+        self.canvas().pixels().get(rows).unwrap_or(&[])
     }
 
-    /// Starts a picture from the base's pixels.
-    pub(super) fn begin(&mut self, base: &Canvas) {
-        self.previous.clear();
-        self.previous.extend_from_slice(self.screen.displayed().pixels());
-        self.origins.clear();
+    /// Starts a picture: the base's pixels are put back in the rectangle
+    /// to be repainted, or everywhere when the picture is painted whole.
+    pub(super) fn begin(
+        &mut self,
+        base: &Canvas,
+        damage: Option<Bounds>,
+        whole: bool,
+        origins: BTreeMap<u16, (i32, i32)>,
+    ) {
+        self.origins = origins;
+        let mut previous = core::mem::take(&mut self.previous);
+        previous.clear();
+        if let Some(damage) = damage {
+            previous.extend_from_slice(self.rows(damage));
+        }
+        self.previous = previous;
         if let Some(canvas) = self.screen.page_mut(0) {
             canvas.set_window(Window::page());
-            canvas.copy_from(base);
+            match damage {
+                _ if whole => canvas.copy_from(base),
+                Some(damage) => canvas.restore(base, damage),
+                None => {}
+            }
         }
     }
 
     /// Finishes a picture: what it cost and which rows changed.
-    pub(super) fn end(&mut self, commits: u32, work: u64) {
+    pub(super) fn end(&mut self, commits: u32, work: u64, damage: Option<Bounds>) {
         self.commits = commits;
         self.work = work;
+        if let Some(canvas) = self.screen.page_mut(0) {
+            canvas.tidy_pick();
+        }
+        let Some(damage) = damage else {
+            self.changed = None;
+            return;
+        };
         let width = to_usize(Canvas::width_i32()).max(1);
         let differs = |(old, new): (&[u8], &[u8])| old != new;
-        let rows = || self.previous.chunks(width).zip(self.canvas().pixels().chunks(width));
+        let rows = || self.previous.chunks(width).zip(self.rows(damage).chunks(width));
         let first = rows().position(differs);
         let last = rows().rposition(differs);
-        self.changed = first.zip(last).map(|(first, last)| (to_i32(first).unsigned_abs(), to_i32(last).unsigned_abs()));
+        let row = |index: usize| to_i32(index).saturating_add(damage.top).unsigned_abs();
+        self.changed = first.zip(last).map(|(first, last)| (row(first), row(last)));
     }
 }

@@ -4,7 +4,7 @@ mod canvas;
 mod screen;
 
 pub use canvas::Canvas;
-pub(crate) use canvas::Window;
+pub(crate) use canvas::{Bounds, Window};
 pub use screen::Screen;
 
 /// The VT340's screen width in pixels (manual chapter 1, "VT300 Screen").

@@ -7,7 +7,8 @@
 #   scripts/check.sh commit   lockfile, formatting, the no-panic lists, Clippy
 #   scripts/check.sh push     the tests: a push of livedevelopment
 #   scripts/check.sh full     documentation, release tests, the long
-#                             random-input run in a debug build, the fonts
+#                             random-input run in a debug build, the long
+#                             comparison of partial repaints, the fonts
 #                             against their sources, no unsolved security
 #                             issue: a push to main
 # This repository is developed on chunko, a Linux machine, so the full gate
@@ -83,6 +84,8 @@ full_steps() {
     cargo test --quiet --workspace --release --locked
     step "random input in a debug build, where arithmetic overflow panics"
     cargo test --quiet -p regis --test robustness --locked -- --ignored
+    step "partial repaints against whole ones, at length"
+    cargo test --quiet -p regis --test damage --release --locked -- --ignored
     step "the fonts are what their sources make"
     need_tool python3 "the font tools are Python (sudo apt-get install python3)"
     [[ -f "$VT340_ROM" ]] || fail "the VT340 ROM is not at $VT340_ROM; put vt340e49.bin there (SHA-256 eb0426b4...) or name it in VT340_ROM"
