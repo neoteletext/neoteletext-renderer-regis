@@ -118,7 +118,7 @@ Two consequences:
 
 `D` operations are staged; nothing changes on screen until commit, and then everything changes at once. Operations apply in the order received to a staged copy of the scene, which replaces the visible scene at commit. In D(S5(P0),K3,C), where 5 was a child of 3, drawing 5 survives.
 
-The first implementation rebuilds the whole screen at every commit: the base, then every visible numbered drawing in depth order. It is the reference the equivalence test needs anyway, and it gives a measured baseline. Damage repaint comes second, and repaints only what changed:
+The renderer rebuilds the whole picture each time its caller asks for one: the base, then every visible numbered drawing in depth order. The caller asks when a commit was applied or the base changed, and no more often than it shows frames, so commits that arrive faster than frames are merged and only the latest scene is painted. A full rebuild is the reference the equivalence test needs anyway, and it gives a measured baseline. Damage repaint comes second, is not built yet, and would repaint only what changed:
 
 1. Works out the damaged area: the old and new bounds of every changed drawing.
 2. Copies the base pixels into that area.
@@ -131,7 +131,7 @@ The first implementation rebuilds the whole screen at every commit: the base, th
 * **Validation:** at commit the renderer checks the whole batch against the limits. If any operation fails, none is applied, the screen is unchanged, and the failure is reported to the caller as described under Failed commits.
 * **Reused drawings:** when a drawing changes, every drawing that uses it as a source, directly or indirectly, is damaged and repainted too.
 
-- **Presentation:** the renderer builds the committed picture off screen and presents it, with its pick record, as one frame. A commit is atomic on the visible screen as well as in the scene.
+- **Presentation:** the renderer builds the committed picture apart from the base, in a picture the caller owns, and gives it with its pick record, its commit count and the work it cost as one frame. A commit is atomic on the visible screen as well as in the scene. The renderer says when a frame is wanted: an event at each commit applied, and a mark on the screen when base drawing changed it. A picture also says which rows differ from the one before.
 - **Staged batches** survive leaving and re-entering ReGIS mode. Only a definition left open is discarded.
 
 ## Picking
@@ -250,9 +250,13 @@ Starting values, to be confirmed by measurement. They are derived from the platf
 | Stored contents | 4 MB | About 25 times the largest measured painting |
 | Staged operations | 8 MB | Sending a whole scene at once is one commit holding: the contents plus up to about 3.4 MB of wrappers and attributes (65,535 drawings at roughly 50 bytes each) |
 | Chain depth | 16 | Parent and source links counted together: the nesting reached while drawing. Matches v1 macrograph nesting |
-| Rendering work | 100,000,000 work units per full rebuild | Bytes are a poor measure: a few bytes can fill a large circle or draw size-16 text, so the cap is in the renderer's own work units (pixels visited). Measured on the corpus (14 November 2026, M1 Mac mini): full paintings take 12 to 19 million units at the median and 67 million at most (a 274 KB painting); dashboard and game screens take 2 to 4 million. Rendering runs at about 0.7 million units per millisecond, so the cap covers every measured picture with half again in hand and bounds a full rebuild at about 140 ms on that machine. A drawing's work is metered independent of position and clipping, so it is a fixed number per definition. A reused drawing counts each time it is drawn, and macrograph calls count expanded |
+| Rendering work | 100,000,000 work units per full rebuild, counting 64 for each byte of contents replayed and 64 for each drawing painted beside the pixels visited | Bytes are a poor measure: a few bytes can fill a large circle or draw size-16 text, so the cap is in the renderer's own work units (pixels visited). Measured on the corpus (14 November 2026, M1 Mac mini): full paintings take 12 to 19 million units at the median and 67 million at most (a 274 KB painting); dashboard and game screens take 2 to 4 million. Rendering runs at about 0.7 million units per millisecond, so the cap covers every measured picture with half again in hand and bounds a full rebuild at about 140 ms on that machine. A drawing's work is metered independent of position and clipping, so it is a fixed number per definition. A reused drawing counts each time it is drawn, and macrograph calls count expanded |
 
 Hidden drawings cost storage but no rendering work.
+
+Each byte of contents replayed costs 64 units, what a byte out of a macrograph costs in v1, and each drawing painted costs 64 units whether or not it has contents. Without the second, empty drawings that reuse one another many times over would cost nothing to check and unbounded time to walk. Inside a drawing, shaded and filled areas are paid for whole, seen or not, which is what makes a drawing's work the same wherever it is placed.
+
+Nothing limits how often a rebuild happens. A commit of a dozen bytes can cost a rebuild, so work is not bounded by the bytes received as it is in v1. The receiver reports the work each rebuild cost, and for now that is all (decided 15 November 2026).
 
 **Checking before sending**
 
@@ -296,7 +300,25 @@ Four tests gate the work, and none is traded for performance.
 - [x] Grammar checked against the renderer's lexer: letters are case-insensitive, spaces and control characters are ignored, a semicolon resynchronises outside strings, and `D(E)` is found by the v1 lexer, which also keeps it out of `L` hexadecimal data.
 - [x] Grammar fixed; no longer a draft.
 
+- [x] The picture is rebuilt when the caller asks for one, not at each commit; the work each rebuild cost is reported, and nothing limits how often one happens. Decided 15 November 2026.
+
 All decisions are made. Every figure marked as a starting value is confirmed or changed by measurement during implementation.
+
+## What building changed
+
+The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/numbered.rs`). Where it departs from the text above as first written, the text has been changed to say what was built. The departures:
+
+1. **Rebuild on demand.** The proposal rebuilt at every commit. The renderer rebuilds when its caller asks (`Terminal::compose`), so that commits faster than frames are merged.
+2. **Two costs added to rendering work**: 64 units a byte of contents replayed and 64 a drawing painted. The proposal counted pixels visited only.
+3. **A drawing pays for shaded and filled areas whole.** The proposal said a drawing's work is independent of position and clipping; v1 pays only for the part on the page, so inside a drawing the whole area is paid for.
+4. **Nesting is counted as painting nests.** A drawing nests its source and its children; the cap of 16 and the search for rings follow those links. A drawing whose parent names it as a source is not a ring, because painting it ends: the ring is a drawing that reaches itself by being painted.
+5. **`D` inside a polygon fill is not recognised**, as no command but `V`, `C`, `P` and `W` is; nor is `D(E)` inside any parenthesis when a definition is being received.
+6. **A background colour set by `S(I)` does not reach a drawing**, since `S` has no effect inside one and each starts from a fresh context: replace and erase writing inside a drawing write colour 0.
+7. **Not built:** damage repaint; every rebuild is a full one. The equivalence test therefore has nothing to compare yet.
+8. **The staged cap counts** the bytes of `D` commands and of definitions received since the last commit.
+9. **A validator keeps no pixels**: what the stream draws outside numbered drawings is read and not drawn.
+
+The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
 
 ## Sources
 
