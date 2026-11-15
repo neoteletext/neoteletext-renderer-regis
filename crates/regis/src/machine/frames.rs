@@ -12,6 +12,12 @@ pub(crate) enum Command {
     Load,
     Report,
     Fill,
+    /// `D`, the drawing command of ReGIS v2 (`docs/regis-v2.md`).
+    Drawing,
+    /// A command that has no effect where it stands: its arguments are
+    /// read and dropped. Inside a numbered drawing that is `S`, `R` and
+    /// `D`; from a macrograph it is `D`.
+    Ignored,
 }
 
 impl Command {
@@ -68,6 +74,10 @@ pub(crate) enum Context {
     ReportMacrograph,
     /// `R(P(I))`
     ReportPosition,
+    /// `D(S n(...))`: the attributes of a numbered drawing.
+    DrawingSet,
+    /// `D(S n(C(...)))`: a clip rectangle.
+    DrawingClip,
     /// Something not understood: skipped to its closing parenthesis.
     Skip,
 }

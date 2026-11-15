@@ -12,6 +12,7 @@ mod fill;
 mod frames;
 mod lettering;
 mod load;
+mod numbered;
 mod outbox;
 mod pen;
 mod position;
@@ -22,4 +23,6 @@ mod syntax;
 mod text;
 mod write;
 
-pub(crate) use state::Machine;
+pub(crate) use lettering::LOADABLE_SETS;
+pub(crate) use numbered::{Attribute, Clip, Operation};
+pub(crate) use state::{Machine, Reading, Role};

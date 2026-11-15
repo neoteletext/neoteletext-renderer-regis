@@ -6,6 +6,7 @@ use super::colour::ColourSpec;
 use super::curve::{ArcOptions, Curve};
 use super::fill::Fill;
 use super::lettering::{Characters, Text};
+use super::numbered::{Numbered, Operation};
 use super::outbox::Outbox;
 use super::pen::Pen;
 use super::syntax::Syntax;
@@ -27,6 +28,24 @@ pub(crate) struct Fault {
     pub(crate) character: u8,
 }
 
+/// Whose commands a machine carries out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
+    /// The stream's, on the base picture.
+    Base,
+    /// A numbered drawing's contents: `S`, `L`, `R` and `D` have no effect
+    /// there (`docs/regis-v2.md`, "Rules for contents").
+    Drawing,
+}
+
+/// Where the byte being read came from; `D` is honoured only in the
+/// stream as received.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reading {
+    Stream,
+    Macrograph,
+}
+
 /// Everything ReGIS remembers between bytes.
 #[derive(Debug)]
 pub(crate) struct Machine {
@@ -38,9 +57,9 @@ pub(crate) struct Machine {
     /// Positions saved by `(B)`; `None` is the placeholder `(S)` saves.
     pub(super) stack: Vec<Option<Point>>,
     pub(super) pen: Pen,
-    pub(super) palette: Palette,
+    pub(crate) palette: Palette,
     pub(super) text: Text,
-    pub(super) characters: Characters,
+    pub(crate) characters: Characters,
 
     // Figures in progress.
     pub(super) arc: ArcOptions,
@@ -61,6 +80,13 @@ pub(crate) struct Machine {
     pub(crate) macrographs: Macrographs,
     pub(crate) outbox: Outbox,
     pub(crate) work: Work,
+
+    // ReGIS v2.
+    pub(crate) role: Role,
+    pub(crate) reading: Reading,
+    pub(super) numbered: Numbered,
+    /// `D` operations read and not yet collected by the terminal.
+    pub(crate) operations: Vec<Operation>,
 }
 
 impl Machine {
@@ -89,7 +115,16 @@ impl Machine {
             macrographs: Macrographs::default(),
             outbox: Outbox::default(),
             work: Work::new(),
+            role: Role::Base,
+            reading: Reading::Stream,
+            numbered: Numbered::default(),
+            operations: Vec::new(),
         }
+    }
+
+    /// Whether the commands are a numbered drawing's contents.
+    pub(crate) fn inside_drawing(&self) -> bool {
+        self.role == Role::Drawing
     }
 
     pub(crate) fn set_font(&mut self, font: Font) {

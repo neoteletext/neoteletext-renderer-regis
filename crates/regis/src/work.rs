@@ -18,6 +18,16 @@ impl Work {
         Self { left: WORK_CAP, exhausted: false }
     }
 
+    /// An allowance of exactly `units`, for painting a numbered drawing.
+    pub(crate) const fn with(units: u64) -> Self {
+        Self { left: units, exhausted: false }
+    }
+
+    /// The units not yet spent.
+    pub(crate) const fn left(&self) -> u64 {
+        self.left
+    }
+
     /// Credits the allowance for `bytes` of new input.
     pub(crate) fn earn(&mut self, bytes: usize) {
         let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);

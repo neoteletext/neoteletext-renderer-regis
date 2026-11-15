@@ -7,8 +7,9 @@
 
 use alloc::vec::Vec;
 
-use super::Terminal;
+use crate::lexer::Lexer;
 use crate::limits::{MAX_MACROGRAPH_BYTES, MAX_MACROGRAPH_DEPTH};
+use crate::machine::{Machine, Reading};
 use crate::macrograph::slot;
 use crate::surface::Screen;
 
@@ -50,11 +51,48 @@ impl Source {
     }
 }
 
-impl Terminal {
+/// What reads ReGIS commands and carries them out: macrograph expansion,
+/// the lexer and the machine. The terminal has one for the stream; ReGIS
+/// v2 has a second that replays the contents of numbered drawings.
+#[derive(Debug)]
+pub(crate) struct Interpreter {
+    source: Source,
+    lexer: Lexer,
+    pub(crate) machine: Machine,
+}
+
+impl Interpreter {
+    pub(crate) fn new() -> Self {
+        Self { source: Source::default(), lexer: Lexer::default(), machine: Machine::new() }
+    }
+
+    /// Ends the input: acts on a number or string that was only waiting
+    /// for the byte after it.
+    pub(crate) fn finish(&mut self, screen: &mut Screen) {
+        if let Some(token) = self.lexer.finish() {
+            self.machine.token(screen, token);
+        }
+    }
+
+    /// `ESC P 1 p`: "ReGIS begins at a new command".
+    pub(crate) fn restart(&mut self, screen: &mut Screen) {
+        self.lexer.reset();
+        self.source.reset();
+        self.machine.resynchronise(screen);
+    }
+
+    /// Forgets everything read but not acted on, without acting on it.
+    pub(crate) fn forget_input(&mut self) {
+        self.lexer.reset();
+        self.source.reset();
+    }
+
     /// Takes one byte of ReGIS commands from the stream, then runs any
     /// macrographs it invoked to their ends.
-    pub(super) fn command_byte(&mut self, screen: &mut Screen, byte: u8) {
+    pub(crate) fn command_byte(&mut self, screen: &mut Screen, byte: u8) {
+        self.machine.reading = Reading::Stream;
         self.source_byte(screen, byte);
+        self.machine.reading = Reading::Macrograph;
         while let Some(call) = self.source.calls.last_mut() {
             let Some(next) = self.machine.macrographs.body(call.slot).get(call.at).copied() else {
                 self.source.calls.pop();
@@ -72,6 +110,7 @@ impl Terminal {
             }
             self.source_byte(screen, next);
         }
+        self.machine.reading = Reading::Stream;
     }
 
     /// One byte, from the stream or from a macrograph.
@@ -99,6 +138,9 @@ impl Terminal {
         match byte {
             // "You cannot define a macrograph while inside another."
             b':' if self.source.calls.is_empty() => self.source.at = At::Letter,
+            // A numbered drawing neither clears nor defines macrographs
+            // (`docs/regis-v2.md`, "Rules for contents").
+            b'.' if self.machine.inside_drawing() => {}
             b'.' => self.machine.macrographs.clear(),
             _ => match slot(byte) {
                 Some(slot) => self.invoke(slot),
@@ -122,6 +164,9 @@ impl Terminal {
     /// One byte of a definition; `@;` ends it.
     fn define(&mut self, slot: usize, mut body: Vec<u8>, at_seen: bool, mut overflowed: bool, byte: u8) {
         if at_seen && byte == b';' {
+            if self.machine.inside_drawing() {
+                return;
+            }
             // A definition too long to keep is dropped, not cut short.
             self.machine.macrographs.define(slot, if overflowed { Vec::new() } else { body });
             return;

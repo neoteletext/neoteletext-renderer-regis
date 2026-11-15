@@ -22,6 +22,9 @@ pub(crate) struct Number {
     pub(crate) digits: u32,
     /// The last sixteen whole-part digits as bits: 1 for any digit but 0.
     pub(crate) bits: u16,
+    /// The value truncated to an integer before it is clamped to the
+    /// coordinate range: drawing numbers run to 65,535, beyond it.
+    wide: i64,
 }
 
 impl Number {
@@ -32,6 +35,12 @@ impl Number {
 
     /// The value rounded to the nearest integer (arcs are drawn "to the
     /// closest degree", manual chapter 6).
+    /// The value truncated to an integer, not clamped to the coordinate
+    /// range (but never beyond a million million either way).
+    pub(crate) const fn wide(self) -> i64 {
+        self.wide
+    }
+
     pub(crate) fn rounded(self) -> i32 {
         let half = if self.milli < 0 { -(MILLI / 2) } else { MILLI / 2 };
         i32::try_from(self.milli.saturating_add(half).checked_div(MILLI).unwrap_or(0)).unwrap_or(0)
@@ -155,7 +164,8 @@ impl Scanner {
         }
         let low = i64::from(MIN_COORDINATE).saturating_mul(MILLI);
         let high = i64::from(MAX_COORDINATE).saturating_mul(MILLI);
-        Some(Number { milli: milli.clamp(low, high), signed: self.signed, digits: self.digits, bits: self.bits })
+        let wide = milli.checked_div(MILLI).unwrap_or(0);
+        Some(Number { milli: milli.clamp(low, high), signed: self.signed, digits: self.digits, bits: self.bits, wide })
     }
 }
 

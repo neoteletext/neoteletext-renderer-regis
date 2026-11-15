@@ -3,7 +3,7 @@
 use super::Machine;
 use super::curve::ArcOptions;
 use super::frames::{Command, Context};
-use super::state::Fault;
+use super::state::{Fault, Reading};
 use super::write::ShadeOption;
 use crate::lexer::{DigitMode, Token};
 use crate::surface::Screen;
@@ -38,6 +38,7 @@ impl Machine {
     pub(crate) fn token(&mut self, screen: &mut Screen, token: Token) {
         match token {
             Token::Resync => self.resynchronise(screen),
+            _ if self.skipping_to_resync() => {}
             Token::Open if self.syntax.skipping() => self.syntax.open(Context::Skip),
             Token::Close if self.syntax.skipping() => {
                 self.syntax.close();
@@ -53,6 +54,7 @@ impl Machine {
     /// clears the error report (manual chapter 1, "Resynchronization").
     pub(crate) fn resynchronise(&mut self, screen: &mut Screen) {
         self.finish_cell();
+        self.abandon_drawing_command();
         self.syntax.reset();
         if self.in_fill() {
             self.end_fill(screen);
@@ -122,7 +124,19 @@ impl Machine {
     }
 
     fn key_letter(&mut self, letter: u8) {
-        match Command::of(letter) {
+        let command = match letter {
+            // ReGIS v2: `D` is honoured only in the stream as received and
+            // outside numbered drawings, where `S` and `R` have no effect
+            // either (`docs/regis-v2.md`, "Rules for contents").
+            b'D' if !self.in_fill() => Some(if self.inside_drawing() || self.reading == Reading::Macrograph {
+                Command::Ignored
+            } else {
+                Command::Drawing
+            }),
+            b'S' | b'R' if self.inside_drawing() && !self.in_fill() => Some(Command::Ignored),
+            _ => Command::of(letter),
+        };
+        match command {
             Some(command) if !self.in_fill() || command.allowed_in_fill() => self.begin_command(command),
             _ => self.note_fault(errors::IGNORED_CHARACTER, letter),
         }
@@ -142,6 +156,10 @@ impl Machine {
                 self.pen.temporary = None;
                 Context::TemporaryWrite
             }
+            Some(Command::Drawing) => {
+                self.open_drawing_command();
+                Context::Options(Command::Drawing)
+            }
             Some(command) => Context::Options(command),
             None => Context::Skip,
         };
@@ -155,6 +173,8 @@ impl Machine {
             Context::Colour(target) => self.finish_colour(target),
             Context::Options(Command::Report) => self.finish_report(frame.option),
             Context::Options(Command::Text) => self.text.tilted = false,
+            Context::Options(Command::Drawing) => self.close_drawing_command(),
+            Context::DrawingClip => self.close_drawing_clip(),
             _ => {}
         }
     }
@@ -177,7 +197,13 @@ impl Machine {
             Context::ShadeAxis => self.shade_axis(token),
             Context::ReportMacrograph => self.report_macrograph(token),
             Context::ReportPosition => self.report_position(token),
-            Context::Designators | Context::Skip | Context::Options(Command::Fill) | Context::Fill => {
+            Context::Options(Command::Drawing) => self.drawing_option(token),
+            Context::DrawingSet => self.drawing_attribute(token),
+            Context::DrawingClip => self.drawing_clip(token),
+            Context::Designators
+            | Context::Skip
+            | Context::Options(Command::Fill | Command::Ignored)
+            | Context::Fill => {
                 if *token == Token::Open {
                     self.syntax.open(Context::Skip);
                 }

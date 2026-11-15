@@ -91,8 +91,15 @@ fn run(arguments: &Arguments) -> Result<(), String> {
     events.extend(terminal.finish(&mut screen));
     report(&events);
 
+    // The numbered drawings of ReGIS v2 are painted over the page on show.
+    let mut composed = regis::Picture::new();
     let page = match arguments.page {
         Some(number) => screen.page(number).ok_or_else(|| format!("no page {number}"))?,
+        None if terminal.has_drawings() => {
+            terminal.compose(&screen, &mut composed);
+            eprintln!("numbered drawings: {} commits, {} work units", composed.commits(), composed.work());
+            composed.canvas()
+        }
         None => screen.displayed(),
     };
     let picture = picture::Picture { pixels: page.pixels(), width: page.width(), height: page.height() };
@@ -111,6 +118,9 @@ fn report(events: &[Event]) {
             // they cannot act on the user's terminal.
             Event::Reply(bytes) => eprintln!("reply: {}", bytes.trim_ascii_end().escape_ascii()),
             Event::LimitReached => eprintln!("warning: a work limit was reached; the picture is incomplete"),
+            Event::CommitFailed { error, drawing } => {
+                eprintln!("warning: a commit failed with code {} ({error:?}), drawing {drawing}", error.code());
+            }
             // Waits and locator requests mean nothing to a still picture.
             _ => {}
         }

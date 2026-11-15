@@ -52,6 +52,29 @@ pub const WORK_PER_BYTE: u64 = 256;
 /// Work units that can be saved up; also the allowance at start.
 pub const WORK_CAP: u64 = 16_000_000;
 
+/// Numbered drawings of ReGIS v2 are named 1 to this (`docs/regis-v2.md`,
+/// "The D command"); it is also the most that can exist.
+pub const MAX_DRAWING_NUMBER: u16 = 65_535;
+/// Bytes of contents all numbered drawings may hold together: about 25
+/// times the largest painting measured (`docs/regis-v2.md`, "Bounds").
+pub const MAX_DRAWING_CONTENT_BYTES: usize = 4 * 1024 * 1024;
+/// Bytes of `D` operations and definitions that may wait for one commit: a
+/// whole scene sent at once is its contents and about 3.4 MB of wrappers.
+pub const MAX_STAGED_BYTES: usize = 8 * 1024 * 1024;
+/// Drawings nested through parent and source links while painting; the
+/// figure the manual gives for macrograph nesting (chapter 9).
+pub const MAX_DRAWING_DEPTH: usize = 16;
+/// Work units one repaint of every visible numbered drawing may cost. The
+/// corpus's largest painting takes 67 million (14 November 2026).
+pub const MAX_REBUILD_WORK: u64 = 100_000_000;
+/// Work units each byte of a numbered drawing's contents costs each time
+/// the drawing is painted: what a byte executed out of a macrograph costs.
+pub const DRAWING_BYTE_COST: u64 = 64;
+/// Work units each numbered drawing costs each time it is painted, with or
+/// without contents, so that empty drawings reused many times over are
+/// paid for.
+pub const DRAWING_VISIT_COST: u64 = 64;
+
 /// Events one feeding call returns; later ones are dropped.
 pub const MAX_EVENTS: usize = 1024;
 /// Bytes of font text [`crate::Font::parse`] accepts.

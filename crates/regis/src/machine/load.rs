@@ -24,6 +24,15 @@ const NIBBLE: u32 = 4;
 
 impl Machine {
     pub(super) fn load_option(&mut self, token: &Token) {
+        if self.inside_drawing() {
+            // A numbered drawing loads nothing; its options are read and dropped.
+            match *token {
+                Token::Letter(letter) => self.syntax.set_option_letter(letter),
+                Token::Open => self.syntax.open(Context::Skip),
+                _ => {}
+            }
+            return;
+        }
         match *token {
             Token::Letter(letter) => self.syntax.set_option_letter(letter),
             Token::Number(number) if self.syntax.option_letter() == b'A' => match usize::try_from(number.value()) {
@@ -67,6 +76,11 @@ impl Machine {
     /// Stores the cell being loaded, if any.
     pub(super) fn finish_cell(&mut self) {
         let Some(mut cell) = self.characters.cell.take() else { return };
+        if self.inside_drawing() {
+            // The cell was read only so that its hexadecimal digits were
+            // not taken for commands.
+            return;
+        }
         cell.end_row();
         if let Some(alphabet) = self.characters.loading_set() {
             alphabet.load(cell.code, &cell.rows);

@@ -10,11 +10,79 @@ use crate::convert::{to_i32, to_usize};
 /// (manual chapter 2, "VT340 Monochrome and Color Maps").
 pub(crate) const PLANE_MASK: u8 = 0x0F;
 
+/// Where on a page drawing lands. ReGIS v1 draws on the whole page, where
+/// it says. A numbered drawing of ReGIS v2 is drawn moved to its screen
+/// position, shows only inside its clip rectangles, and marks the pixels
+/// it writes in the pick record (`docs/regis-v2.md`, "Attributes" and
+/// "Picking").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Window {
+    /// Added to every position drawn.
+    pub(crate) dx: i32,
+    pub(crate) dy: i32,
+    /// The pixels that may change, in page coordinates, both ends
+    /// included; none when `left > right` or `top > bottom`.
+    pub(crate) left: i32,
+    pub(crate) top: i32,
+    pub(crate) right: i32,
+    pub(crate) bottom: i32,
+    /// The drawing number written to the pick record with each pixel
+    /// written; 0 leaves the record alone.
+    pub(crate) pick: u16,
+    /// Shaded and filled areas are paid for whole, not just the part on
+    /// the page, so a numbered drawing's work is the same wherever it is
+    /// placed and however it is clipped.
+    pub(crate) whole_cost: bool,
+}
+
+impl Window {
+    /// The whole page, unmoved: ReGIS v1.
+    pub(crate) fn page() -> Self {
+        Self {
+            dx: 0,
+            dy: 0,
+            left: 0,
+            top: 0,
+            right: Canvas::width_i32().saturating_sub(1),
+            bottom: Canvas::height_i32().saturating_sub(1),
+            pick: 0,
+            whole_cost: false,
+        }
+    }
+
+    /// The pixels that may change, in the coordinates drawing uses: left,
+    /// top, right, bottom, both ends included.
+    pub(crate) const fn local(&self) -> (i32, i32, i32, i32) {
+        (
+            self.left.saturating_sub(self.dx),
+            self.top.saturating_sub(self.dy),
+            self.right.saturating_sub(self.dx),
+            self.bottom.saturating_sub(self.dy),
+        )
+    }
+}
+
 /// One 800 by 480 graphics page. Each pixel is a colour-map address, 0 to 15.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Two pages are equal when their pixels are.
+#[derive(Clone, Debug)]
 pub struct Canvas {
     pixels: Vec<u8>,
+    window: Window,
+    /// The pick record: for each pixel the numbered drawing that picking
+    /// reports there, 0 for none. Empty until a detectable drawing is
+    /// painted.
+    pick: Vec<u16>,
+    /// Whether a pixel was written since this was last asked.
+    changed: bool,
 }
+
+impl PartialEq for Canvas {
+    fn eq(&self, other: &Self) -> bool {
+        self.pixels == other.pixels
+    }
+}
+
+impl Eq for Canvas {}
 
 impl Default for Canvas {
     fn default() -> Self {
@@ -26,7 +94,38 @@ impl Canvas {
     /// A page with every pixel at colour-map address 0.
     #[must_use]
     pub fn new() -> Self {
-        Self { pixels: vec![0; Self::area()] }
+        Self { pixels: vec![0; Self::area()], window: Window::page(), pick: Vec::new(), changed: false }
+    }
+
+    /// A page with no pixel memory: drawing on it does nothing. The second
+    /// page of a composed picture, which numbered drawings never draw on.
+    pub(crate) fn absent() -> Self {
+        Self { pixels: Vec::new(), window: Window::page(), pick: Vec::new(), changed: false }
+    }
+
+    pub(crate) const fn window(&self) -> Window {
+        self.window
+    }
+
+    pub(crate) const fn set_window(&mut self, window: Window) {
+        self.window = window;
+    }
+
+    /// Replaces every pixel with another page's and forgets the pick record.
+    pub(crate) fn copy_from(&mut self, other: &Self) {
+        self.pixels.clear();
+        self.pixels.extend_from_slice(&other.pixels);
+        self.pick.clear();
+    }
+
+    /// The pick record, row by row; empty when no pixel has a drawing.
+    pub(crate) fn pick(&self) -> &[u16] {
+        &self.pick
+    }
+
+    /// Whether drawing wrote a pixel since this was last asked.
+    pub(crate) const fn take_changed(&mut self) -> bool {
+        core::mem::replace(&mut self.changed, false)
     }
 
     fn area() -> usize {
@@ -77,18 +176,37 @@ impl Canvas {
         self.pixels.get(Self::index(x, y)?).copied()
     }
 
-    /// Changes one pixel through `change`; positions off the page do nothing.
+    /// Changes one pixel through `change`; positions outside the window do
+    /// nothing.
     pub(crate) fn update(&mut self, x: i32, y: i32, change: impl FnOnce(u8) -> Option<u8>) {
-        if let Some(pixel) = Self::index(x, y).and_then(|index| self.pixels.get_mut(index))
+        let window = self.window;
+        let (x, y) = (x.saturating_add(window.dx), y.saturating_add(window.dy));
+        if x < window.left || x > window.right || y < window.top || y > window.bottom {
+            return;
+        }
+        let Some(index) = Self::index(x, y) else { return };
+        if let Some(pixel) = self.pixels.get_mut(index)
             && let Some(value) = change(*pixel)
         {
             *pixel = value & PLANE_MASK;
+            self.changed = true;
+            if window.pick != 0 {
+                // The record is made when the first detectable drawing
+                // writes a pixel (`docs/regis-v2.md`, "Picking").
+                if self.pick.is_empty() {
+                    self.pick = vec![0; Self::area()];
+                }
+                if let Some(target) = self.pick.get_mut(index) {
+                    *target = window.pick;
+                }
+            }
         }
     }
 
     /// Sets every pixel to one colour-map address.
     pub(crate) fn clear(&mut self, value: u8) {
         self.pixels.fill(value & PLANE_MASK);
+        self.changed = true;
     }
 
     /// Moves the picture so the pixel at (`dx`, `dy`) lands on the top-left
@@ -96,6 +214,7 @@ impl Canvas {
     /// (manual chapter 2, "Scroll Argument").
     pub(crate) fn scroll(&mut self, dx: i32, dy: i32, fill: u8) {
         let old = core::mem::replace(&mut self.pixels, vec![fill & PLANE_MASK; Self::area()]);
+        self.changed = true;
         let width = to_usize(Self::width_i32());
         for (index, pixel) in self.pixels.iter_mut().enumerate() {
             let x = to_i32(index.checked_rem(width).unwrap_or(0)).saturating_add(dx);

@@ -66,20 +66,30 @@ impl<'a> Painter<'a> {
 
     /// Shades from a point to the reference line, both included.
     fn shade_from(&mut self, at: Point, shade: Shade) -> bool {
-        let (fixed, moving, limit, fixed_limit) = if shade.vertical {
-            (at.y, at.x, Canvas::width_i32(), Canvas::height_i32())
+        let window = self.canvas.window();
+        let (left, top, right, bottom) = window.local();
+        let (fixed, moving, first, last, fixed_first, fixed_last) = if shade.vertical {
+            (at.y, at.x, left, right, top, bottom)
         } else {
-            (at.x, at.y, Canvas::height_i32(), Canvas::width_i32())
+            (at.x, at.y, top, bottom, left, right)
         };
-        if !(0..fixed_limit).contains(&fixed) {
+        if window.whole_cost {
+            // A numbered drawing pays for the whole run, seen or not, so
+            // its work does not depend on where it is placed. Coordinates
+            // are within 2^17 of the origin, so the run fits `i32`.
+            if !self.work.spend(to_u64((moving - shade.at).abs() + 1)) {
+                return false;
+            }
+        }
+        if !(fixed_first..=fixed_last).contains(&fixed) {
             return true;
         }
-        let low = moving.min(shade.at).max(0);
-        let high = moving.max(shade.at).min(limit - 1);
+        let low = moving.min(shade.at).max(first);
+        let high = moving.max(shade.at).min(last);
         if low > high {
             return true;
         }
-        if !self.work.spend(to_u64(high - low + 1)) {
+        if !window.whole_cost && !self.work.spend(to_u64(high - low + 1)) {
             return false;
         }
         for position in low..=high {
@@ -117,6 +127,11 @@ impl<'a> Painter<'a> {
     /// Whether blank parts of a character cell change anything.
     pub(crate) const fn writes_off_pixels(&self) -> bool {
         self.ink.writes_off_pixels()
+    }
+
+    /// Where on the page drawing lands.
+    pub(crate) const fn window(&self) -> crate::surface::Window {
+        self.canvas.window()
     }
 
     /// Pays for `units` of work.

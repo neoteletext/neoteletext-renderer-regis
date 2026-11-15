@@ -58,6 +58,11 @@ impl Stream {
         self.eight_bit = recognise;
     }
 
+    /// Whether the last byte left the stream inside ReGIS commands.
+    pub(super) const fn in_regis(&self) -> bool {
+        matches!(self.state, State::Regis)
+    }
+
     #[allow(
         clippy::match_same_arms,
         reason = "the arms are tried in order, so equal results cannot be merged across the arms between them"

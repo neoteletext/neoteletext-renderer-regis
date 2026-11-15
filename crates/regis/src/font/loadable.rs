@@ -12,7 +12,7 @@ const FIRST_CODE: u8 = 0x20;
 const NAME_LENGTH: usize = 10;
 
 /// One loadable character set.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Loadable {
     name: Vec<u8>,
     cells: [[u8; CELL_HEIGHT]; CHARACTERS],

@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use crate::limits::{MACROGRAPHS, MAX_MACROGRAPH_BYTES};
 
 /// The twenty-six macrographs.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Macrographs {
     bodies: [Vec<u8>; MACROGRAPHS],
 }

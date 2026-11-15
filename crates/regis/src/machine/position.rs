@@ -22,7 +22,7 @@ impl Machine {
             // Spacing is a displacement in the stream's coordinates.
             Command::Text => self.text.controls.spacing = Some(self.addressing.offset(axis(extent.x), axis(extent.y))),
             Command::Screen => self.scroll_to(screen, extent),
-            Command::Write | Command::Load | Command::Report | Command::Fill => {}
+            Command::Write | Command::Load | Command::Report | Command::Fill | Command::Drawing | Command::Ignored => {}
         }
     }
 
@@ -43,7 +43,7 @@ impl Machine {
                 let steps = self.addressing.length(self.controls().pv_multiplier);
                 self.scroll(screen, x.saturating_mul(steps), y.saturating_mul(steps));
             }
-            Command::Write | Command::Load | Command::Report | Command::Fill => {}
+            Command::Write | Command::Load | Command::Report | Command::Fill | Command::Drawing | Command::Ignored => {}
         }
     }
 

@@ -17,7 +17,7 @@ use super::line::walk;
 use crate::addressing::div_round;
 use crate::convert::{narrow, to_u64, to_usize};
 use crate::geometry::Point;
-use crate::surface::Canvas;
+use crate::surface::Window;
 
 /// A polygon needs "at least three different vertices" (manual chapter 11).
 const MIN_VERTICES: usize = 3;
@@ -37,16 +37,25 @@ struct Mask {
 impl Mask {
     /// The mask for a polygon, or `None` if it lies off the page. Nothing
     /// is allocated: the caller pays for the area first.
-    fn covering(vertices: &[Point]) -> Option<Self> {
-        let left = vertices.iter().map(|v| v.x).min()?.max(0);
-        let right = vertices.iter().map(|v| v.x).max()?.min(Canvas::width_i32() - 1);
-        let top = vertices.iter().map(|v| v.y).min()?.max(0);
-        let bottom = vertices.iter().map(|v| v.y).max()?.min(Canvas::height_i32() - 1);
+    fn covering(vertices: &[Point], window: Window) -> Option<Self> {
+        let (first_column, first_row, last_column, last_row) = window.local();
+        let left = vertices.iter().map(|v| v.x).min()?.max(first_column);
+        let right = vertices.iter().map(|v| v.x).max()?.min(last_column);
+        let top = vertices.iter().map(|v| v.y).min()?.max(first_row);
+        let bottom = vertices.iter().map(|v| v.y).max()?.min(last_row);
         if left > right || top > bottom {
             return None;
         }
         let (width, height) = (right - left + 1, bottom - top + 1);
         Some(Self { left, top, width, height, set: Vec::new() })
+    }
+
+    /// The work the whole polygon costs wherever it lies: its bounding
+    /// box, as [`fill_polygon`] charges for the part on the page.
+    fn whole_cost(vertices: &[Point]) -> Option<u64> {
+        let width = to_u64(vertices.iter().map(|v| v.x).max()? - vertices.iter().map(|v| v.x).min()? + 1);
+        let height = to_u64(vertices.iter().map(|v| v.y).max()? - vertices.iter().map(|v| v.y).min()? + 1);
+        Some(fill_cost(width, height, vertices.len()))
     }
 
     fn mark(&mut self, x: i32, y: i32) {
@@ -64,10 +73,21 @@ impl Mask {
             self.mark(x, y);
         }
     }
+}
 
-    fn area(&self) -> u64 {
-        to_u64(self.width) * to_u64(self.height)
-    }
+/// The work of filling a box of pixels with a polygon of `vertices`
+/// corners: each pixel is marked and written, and each row looks at every
+/// edge and sorts its crossings.
+fn fill_cost(width: u64, height: u64, vertices: usize) -> u64 {
+    let edge_work =
+        height.saturating_mul(u64::try_from(vertices).unwrap_or(u64::MAX)).saturating_mul(ROW_COST_PER_VERTEX);
+    width.saturating_mul(height).saturating_mul(2).saturating_add(edge_work)
+}
+
+/// Pays for one edge: an edge can be far longer than the page.
+fn pay_edge(painter: &mut Painter<'_>, a: Point, b: Point) -> bool {
+    let length = (b.x - a.x).abs().max((b.y - a.y).abs());
+    painter.spend(to_u64(length))
 }
 
 /// Where the polygon's edges cross pixel row `y`, sorted. An edge covers
@@ -92,10 +112,18 @@ pub(crate) fn fill_polygon(painter: &mut Painter<'_>, vertices: &[Point]) -> boo
     if vertices.len() < MIN_VERTICES {
         return true;
     }
-    let Some(mut mask) = Mask::covering(vertices) else { return true };
-    // Each row looks at every edge and sorts its crossings.
-    let edge_work = to_u64(mask.height) * u64::try_from(vertices.len()).unwrap_or(u64::MAX) * ROW_COST_PER_VERTEX;
-    if !painter.spend(mask.area().saturating_mul(2).saturating_add(edge_work)) {
+    let window = painter.window();
+    // A numbered drawing pays for the whole polygon, seen or not, so its
+    // work does not depend on where it is placed.
+    if window.whole_cost && !Mask::whole_cost(vertices).is_some_and(|cost| painter.spend(cost)) {
+        return false;
+    }
+    let Some(mut mask) = Mask::covering(vertices, window) else {
+        // Off the page: only the edges' lengths are paid for, as below.
+        return !window.whole_cost
+            || vertices.iter().zip(vertices.iter().cycle().skip(1)).all(|(a, b)| pay_edge(painter, *a, *b));
+    };
+    if !window.whole_cost && !painter.spend(fill_cost(to_u64(mask.width), to_u64(mask.height), vertices.len())) {
         return false;
     }
     mask.set = vec![false; to_usize(mask.width) * to_usize(mask.height)];
@@ -125,8 +153,7 @@ pub(crate) fn fill_polygon(painter: &mut Painter<'_>, vertices: &[Point]) -> boo
 /// Marks the pixels of one edge; an edge can be far longer than the page,
 /// so its length is paid for.
 fn outline(painter: &mut Painter<'_>, mask: &mut Mask, a: Point, b: Point) -> bool {
-    let length = (b.x - a.x).abs().max((b.y - a.y).abs());
-    if !painter.spend(to_u64(length)) {
+    if !pay_edge(painter, a, b) {
         return false;
     }
     walk(a, b, |at| {
