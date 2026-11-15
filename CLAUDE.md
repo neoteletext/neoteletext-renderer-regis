@@ -1,4 +1,4 @@
-# neoteletext-regis
+# neoteletext-renderer-regis
 
 DEC ReGIS (the VT340's Remote Graphics Instruction Set) for NeoTeletext. The repository holds three crates:
 - `regis`, the renderer: a `no_std` library that takes bytes and writes colour-map addresses into the caller's screen;

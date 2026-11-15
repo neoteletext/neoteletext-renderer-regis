@@ -1,4 +1,4 @@
-# neoteletext-regis
+# neoteletext-renderer-regis
 
 A renderer for DEC ReGIS, the vector graphics language of the VT125, VT240,
 VT330 and VT340 terminals, written from scratch in Rust. It is the third

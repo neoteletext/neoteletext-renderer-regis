@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>neoteletext-regis: plan for the server</title>
+<title>neoteletext-renderer-regis: plan for the server</title>
 <style>
 :root { --bg: #fbfbfd; --fg: #1c1d24; --muted: #5b5e70; --rule: #d6d8e2; --code-bg: #eeeff5; --accent: #2c3fb8; }
 @media (prefers-color-scheme: dark) {
@@ -115,7 +115,7 @@ nav { font-size: 0.95rem; color: var(--muted); }
 <ol>
 <li>Owner's decision: adopt options A and C; amend DEC-1459's record list; allocate record type 13 and capability bit 23. Requirements recorded in rdm for the engine, server, kits and common.</li>
 <li><code>neoteletext-common</code>: PROTOCOL.html sections for the record, the capability and protocol 8; wire-vector rows.</li>
-<li><code>neoteletext-engine</code>: the record encoder and decoder, the capability constant, the wire-vector copy.</li>
+<li><code>neoteletext-renderer-teletext</code>: the record encoder and decoder, the capability constant, the wire-vector copy.</li>
 <li><code>neoteletext-app-server</code>: move the engine pin; add the <code>regis</code> pin; the message, checks, trial render, record sending, fallback; schema 8; tests and fuzz targets.</li>
 <li>Kits: schema copies and the <code>regis()</code> call; one demonstration channel.</li>
 <li>Browser: see the browser plan. Until it is done every receiver gets the fallback, so the server side can ship first.</li>
