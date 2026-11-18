@@ -52,8 +52,11 @@ target/release/regis-render picture.regis picture.png</code></pre>
 <tr><td><code>--font FILE</code></td><td>The shapes of the built-in characters, in place of the VT340 font compiled into the tool.</td></tr>
 <tr><td><code>--page 0|1</code></td><td>Write this graphics page instead of the one the stream left on show.</td></tr>
 <tr><td><code>--macrograph-reports</code></td><td>Let <code>R(M(letter))</code> report a macrograph's contents (off otherwise).</td></tr>
+<tr><td><code>--frames TICKS</code></td><td>Play the picture's animation for this many ticks of a sixtieth of a second, 1 to 36,000, from tick 0, and write a sequence of images instead of one (see <a href="#animation">animation</a>).</td></tr>
+<tr><td><code>--frame-step K</code></td><td>With <code>--frames</code>: write an image every <code>K</code> ticks (1 if not given), and always the last.</td></tr>
+<tr><td><code>--script FILE</code></td><td>With <code>--frames</code>: a text file of timed operations on numbered drawings, one a line; <code>-</code> reads standard input.</td></tr>
 <tr><td><code>INPUT</code></td><td>A file of ReGIS. If it holds a device control string (<code>ESC P p … ESC \</code>) it is read as a terminal would read it; otherwise the whole file is taken as commands.</td></tr>
-<tr><td><code>OUTPUT</code></td><td>A name ending <code>.ppm</code> writes a binary PPM; anything else writes a PNG.</td></tr>
+<tr><td><code>OUTPUT</code></td><td>A name ending <code>.ppm</code> writes a binary PPM; anything else writes a PNG. With <code>--frames</code> each image is named with its tick in five digits before the extension: <code>out.png</code> gives <code>out-00000.png</code>, <code>out-00006.png</code> and so on.</td></tr>
 </table>
 <p>Replies the stream asks for (see <a href="#events">events</a>) are printed on standard error. The PNG is not compressed; <code>tools/compress_png.py</code> shrinks one in place.</p>
 
@@ -138,6 +141,55 @@ for (index, pixel) in page.pixels().iter().enumerate() {
 <li><strong><code>Reply</code></strong> is the answer to a report command such as <code>R(P)</code>. Send it only to the program that produced the stream, never to anything that would treat it as typed input. Replies never outweigh the input by more than 4,096 bytes.</li>
 <li><strong><code>LimitReached</code></strong> means a bound in <a href="reference.html#limits">the limits</a> stopped some drawing. The terminal stays usable.</li>
 </ul>
+
+<h2 id="animation">Numbered drawings and animation</h2>
+<p>ReGIS v2 adds one command, <code>D</code>, which keeps a drawing under a number so that it can be moved, hidden, replaced and reused; <a href="regis-v2.md"><code>regis-v2.md</code></a> defines it. The numbered drawings are not drawn on the <code>Screen</code>: <code>Terminal::compose</code> paints them over a copy of it, into a <code>Picture</code> the caller keeps, and repaints only what changed since the picture was last composed.</p>
+<p>A receiver animates numbered drawings itself, with no byte of ReGIS arriving:</p>
+<table>
+<tr><th>Call</th><th>Purpose</th></tr>
+<tr><td><code>Terminal::set_animation(number, state)</code></td><td>Gives a drawing an <code>AnimationState</code>: a position, shown or hidden, a layer, an order, a frame and a forced look, each used in place of what the stream committed. At most 64 drawings hold one. It returns false when the state was not kept as given.</td></tr>
+<tr><td><code>Terminal::clear_animation(number)</code></td><td>Forgets it: the drawing is painted as committed.</td></tr>
+<tr><td><code>Terminal::animation(number)</code></td><td>The state held. A commit that sets the same attribute writes over a part of it, and a deletion over all of it.</td></tr>
+<tr><td><code>Terminal::drawing_position(number)</code></td><td>The position in force, which a relative move adds to.</td></tr>
+<tr><td><code>Terminal::bounds(number)</code></td><td>The drawing's bounding <code>Rectangle</code> on the screen, for collision and region tests; <code>None</code> while it is not shown.</td></tr>
+<tr><td><code>Terminal::advance_ticks(ticks)</code></td><td>Says that ticks of a sixtieth of a second have passed. Drawings with a paint rate (<code>T</code>) are painted that much further at the next <code>compose</code>. True while anything is still being painted.</td></tr>
+</table>
+<pre><code>use regis::{AnimationState, Picture, Screen, Terminal};
+
+let mut screen = Screen::new();
+let mut terminal = Terminal::new();
+// Drawing 2: a square on the sprites layer. Drawing 1: the background.
+let _ = terminal.feed_regis(&amp;mut screen, b"D(B1)F(V[0,0][799,0][799,479][0,479])D(E)D(S1(G0))");
+let _ = terminal.feed_regis(&amp;mut screen, b"D(B2)W(I3)F(V[0,0][19,0][19,19][0,19])D(E)D(S2(G2,X100,Y50),C)");
+let mut picture = Picture::new();
+terminal.compose(&amp;screen, &amp;mut picture);
+// Move it: only the two small rectangles are repainted.
+let moved = AnimationState { position: Some((300, 200)), ..AnimationState::default() };
+assert!(terminal.set_animation(2, moved));
+terminal.compose(&amp;screen, &amp;mut picture);
+assert_eq!(picture.canvas().pixel(305, 205), Some(3));</code></pre>
+<ul>
+<li><strong>Layers.</strong> A top-level drawing is in layer 0 (background), 1 (scene, the default), 2 (sprites) or 3 (overlay), by its attribute <code>G</code>. Put what never moves in <code>G0</code>: it is kept painted, and a drawing moving above it replays none of it.</li>
+<li><strong>Frames.</strong> <code>D(S40(F(41,42,43,44)))</code> gives drawing 40 four frames, each a drawing; the state's <code>frame</code> chooses which is drawn. The renderer has no clock: to cycle, the caller sets the frame each tick.</li>
+<li><strong>Looks.</strong> <code>H</code>, <code>A</code> and <code>N</code> name the hover, pressed and alternative looks. The state's <code>look</code> forces one whatever the pointer does.</li>
+<li><strong>Paint rate.</strong> <code>D(S7(T50))</code> paints drawing 7 at 5,000 work units a second, about that many pixels of line: it appears as it is drawn. Its children wait for it.</li>
+</ul>
+<p>The tool plays all of this into images, the same on every run, for tests and golden files:</p>
+<pre><code>target/release/regis-render --frames 60 --frame-step 6 --script docs/examples/animation.script \
+    docs/examples/animation.regis frames/animation.png</code></pre>
+<p>Each line of a script is <code>&lt;tick&gt; &lt;operation&gt; &lt;drawing&gt; …</code>, in ascending tick; a line that begins with <code>#</code> is a comment.</p>
+<table>
+<tr><th>Operation</th><th>Effect</th></tr>
+<tr><td><code>move n x y [relative]</code></td><td>Sets the position, or adds to the position in force.</td></tr>
+<tr><td><code>show n</code>, <code>hide n</code></td><td>Shows or hides the drawing.</td></tr>
+<tr><td><code>look n 0|1|2|3</code></td><td>Forces no look, the hover look, the pressed look or the alternative look.</td></tr>
+<tr><td><code>order n layer|keep order</code></td><td>Sets the layer, 0 to 3, or keeps it, and the order, −128 to 127.</td></tr>
+<tr><td><code>frame n f</code></td><td>Sets the frame, 0 to 15, and stops a cycle.</td></tr>
+<tr><td><code>cycle n first last period [once]</code></td><td>From the next tick, steps the frame from <code>first</code> to <code>last</code> every <code>period</code> ticks (1 to 3,600), round and round or once. At most 16 drawings cycle at once.</td></tr>
+<tr><td><code>stop_cycle n</code></td><td>Stops the cycle; the frame stays.</td></tr>
+<tr><td><code>reset n</code></td><td>Forgets the drawing's whole animation state.</td></tr>
+</table>
+<p>An operation on a drawing that does not exist does nothing and is counted; the count is printed on standard error. <code>regis-minify</code> copies <code>D</code> commands as written and checks its result against the composed picture and its pick record, with every drawing painted to its end.</p>
 
 <h2 id="fonts">Fonts</h2>
 <p>The manual does not give the shapes of the VT340's characters, so the caller supplies them as text. The repository ships two fonts and one loadable set:</p>

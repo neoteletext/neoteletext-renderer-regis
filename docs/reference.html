@@ -36,7 +36,7 @@ nav { font-size: 0.95rem; color: var(--muted); }
 <li><a href="#s">S: screen</a></li><li><a href="#w">W: write controls</a></li><li><a href="#p">P: position</a></li>
 <li><a href="#v">V: vector</a></li><li><a href="#c">C: curve</a></li><li><a href="#t">T: text</a></li>
 <li><a href="#l">L: load</a></li><li><a href="#m">@: macrographs</a></li><li><a href="#r">R: report</a></li>
-<li><a href="#f">F: polygon fill</a></li><li><a href="#raster">How shapes become pixels</a></li>
+<li><a href="#f">F: polygon fill</a></li><li><a href="#d">D: numbered drawings</a></li><li><a href="#raster">How shapes become pixels</a></li>
 <li><a href="#limits">Limits</a></li><li><a href="#differences">Differences from a VT340</a></li><li><a href="#accuracy">Measured accuracy</a></li>
 </ul>
 
@@ -202,6 +202,32 @@ nav { font-size: 0.95rem; color: var(--muted); }
 <h2 id="f">F: polygon fill (manual chapter 11)</h2>
 <p><code>F(…)</code> holds <code>V</code>, <code>C</code>, <code>P</code> and <code>W</code> commands. Nothing inside is drawn as lines; instead each vector's end, each <code>V[]</code>, and each point of an arc, circle or curve becomes a vertex. At the closing parenthesis the polygon is filled and the cursor returns to where it was before the fill. <code>P</code> moves add no vertex. Write controls set inside the fill apply to the whole fill and end with it. Fewer than three vertices draw nothing; up to 4,096 are kept.</p>
 
+<h2 id="d">D: numbered drawings (ReGIS v2)</h2>
+<p>Not in the manual: <code>D</code> is NeoTeletext's one addition to the language, defined in <a href="regis-v2.md"><code>regis-v2.md</code></a>, which is the reference for it. In short:</p>
+<table>
+<tr><th>Form</th><th>Meaning</th></tr>
+<tr><td><code>D(B n)</code> … <code>D(E)</code></td><td>The commands between are stored as drawing <code>n</code>, 1 to 65,535.</td></tr>
+<tr><td><code>D(S n(attributes))</code></td><td>Sets attributes of drawing <code>n</code>.</td></tr>
+<tr><td><code>D(K n)</code>, <code>D(Z)</code></td><td>Deletes drawing <code>n</code> and its children; deletes every drawing.</td></tr>
+<tr><td><code>D(C)</code></td><td>Commit: everything since the last commit takes effect at once, or none of it does.</td></tr>
+</table>
+<table>
+<tr><th>Attribute</th><th>Value</th><th>Meaning</th></tr>
+<tr><td><code>X</code>, <code>Y</code></td><td class="n">signed 16-bit</td><td>Position, relative to the parent</td></tr>
+<tr><td><code>L</code></td><td class="n">signed 16-bit</td><td>Depth among the children of one parent</td></tr>
+<tr><td><code>V</code></td><td class="n">0 or 1</td><td>Visible</td></tr>
+<tr><td><code>P</code></td><td class="n">a drawing, or 0</td><td>Parent</td></tr>
+<tr><td><code>R</code></td><td class="n">a drawing, or 0</td><td>Source: drawn in place of its own contents</td></tr>
+<tr><td><code>I</code></td><td class="n">0 or 1</td><td>Detectable: picking reports it</td></tr>
+<tr><td><code>H</code>, <code>A</code></td><td class="n">a drawing, or 0</td><td>Hover look and pressed look</td></tr>
+<tr><td><code>C</code></td><td class="n"><code>C(Xn,Yn,Wn,Hn)</code> or <code>C0</code></td><td>Clip rectangle</td></tr>
+<tr><td><code>G</code></td><td class="n">0 to 3</td><td>Layer of a top-level drawing: background, scene (the default), sprites, overlay</td></tr>
+<tr><td><code>N</code></td><td class="n">a drawing, or 0</td><td>Alternative look: drawn in its place while the receiver forces it</td></tr>
+<tr><td><code>F</code></td><td class="n"><code>F(n,n,…)</code>, 1 to 16 drawings, or <code>F0</code></td><td>Frame list: the entry the frame in force names is drawn in its place</td></tr>
+<tr><td><code>T</code></td><td class="n">0 to 32,767</td><td>Paint rate: painted gradually at 100 work units a second for each unit; 0 at once</td></tr>
+</table>
+<p>What is drawn in a drawing's place, in order: a look the receiver forces; the pressed look while it is pressed; the hover look while it is hovered; the frame in force; the source; its own contents. A malformed operation or attribute fails its batch at the commit with code 7. Inside a drawing <code>S</code>, <code>L</code>, <code>R</code> and <code>D</code> have no effect.</p>
+
 <h2 id="raster">How shapes become pixels</h2>
 <table>
 <tr><th>Shape</th><th>Rule</th></tr>
@@ -233,6 +259,12 @@ nav { font-size: 0.95rem; color: var(--muted); }
 <tr><td>Reply bytes</td><td class="n">4,096 saved up; 1 earned for each byte fed</td><td>Reply dropped; <code>LimitReached</code></td></tr>
 <tr><td>Delay</td><td class="n">3,600 ticks (one minute) saved up; 1 earned for each byte fed</td><td>Cut; <code>LimitReached</code></td></tr>
 <tr><td>Font text</td><td class="n">1 MiB</td><td><code>Error::FontTooLong</code></td></tr>
+<tr><td>Numbered drawings</td><td class="n">65,535; 4 MiB of contents; 8 MiB staged for one commit; nesting of 16; 100,000,000 work units a repaint</td><td>The commit fails, codes 1 to 6</td></tr>
+<tr><td>Layers</td><td class="n">4</td><td>The attribute is malformed: code 7</td></tr>
+<tr><td>Frames in a frame list</td><td class="n">16</td><td>The attribute is malformed: code 7</td></tr>
+<tr><td>Paint rate</td><td class="n">32,767</td><td>The attribute is malformed: code 7</td></tr>
+<tr><td>Drawings holding animation state</td><td class="n">64</td><td><code>set_animation</code> returns false</td></tr>
+<tr><td>Animation in one tick, kept by the receiver</td><td class="n">192,000 pixels; 3,333,333 work units; 16 drawings cycling</td><td>The animation is slowed</td></tr>
 </table>
 <p>A work unit is one pixel visited. Lines, shading, fills, text cells, erasing and scrolling all pay; an arc pays 4 units a degree; each byte run out of a macrograph costs 64 units. The budgets are credited byte by byte, so a stream is treated the same however it is divided between calls. If the allowance runs out inside a macrograph, the rest of it is dropped and the parser starts afresh at the next command.</p>
 

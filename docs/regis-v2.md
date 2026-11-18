@@ -9,12 +9,13 @@ ReGIS v2 is ReGIS v1, unchanged, plus one command that lets a drawing be numbere
 The changes, all additive:
 
 1. One new command, `D`, to define, change and delete numbered drawings.
-2. Seven attributes per numbered drawing: position, depth, visible, parent, source, detectable, clip rectangle.
+2. Attributes per numbered drawing: position, depth, visible, parent, source, detectable, clip rectangle; since 16 November 2026 the hover look and the pressed look; since 18 November 2026 the layer, the alternative look, the frame list and the paint rate.
 3. The renderer keeps numbered drawings and repaints the screen itself when one changes.
 4. Commit: staged changes appear together, or are rejected together.
 5. A defined starting state for each numbered drawing, so nothing leaks between them.
 6. Screen, load and report commands are ignored inside a numbered drawing.
 7. A pick record names the drawing under each pixel, so a screen position can be resolved to a drawing.
+8. Since 18 November 2026, animation by the receiver: an animation state it sets on numbered drawings, four layers, frame lists and a paint rate (see Animation).
 
 This document covers the language and the renderer only. How the bytes are carried, how input reaches the application, and how a server keeps and resends a scene are outside its scope: the system that embeds the renderer defines them.
 
@@ -26,7 +27,7 @@ These are the constraints the design was held to.
 - **No change to graphical capability.** v2 changes how the system works, not what can be drawn.
 - **Easier applications.** The purpose is to make it easy to change what is on the display.
 - **Minimal.** Good features stay, but there is one way to do each thing.
-- **Carried over from the platform proposal:** no client-side animation, no raster images, no code on the client.
+- **Carried over from the platform proposal:** no raster images, no code on the client. The proposal's third constraint, no client-side animation, was withdrawn by the owner on 18 November 2026 (DEC-6524): the receiver now moves, shows, hides, reorders and cycles numbered drawings and paints them gradually (see Animation). It still runs no code from the page.
 
 ## Model
 
@@ -76,7 +77,7 @@ D(C)                                          commit
 
 ## Attributes
 
-Every numbered drawing has the same nine attributes. The last two, added on 16 November 2026, take effect only through the viewer state (below).
+Every numbered drawing has the same thirteen attributes. The hover look and the pressed look, added on 16 November 2026, take effect only through the viewer state (below). The last four were added on 18 November 2026 with animation (below).
 
 | Attribute | Meaning | Default |
 | --- | --- | --- |
@@ -89,12 +90,17 @@ Every numbered drawing has the same nine attributes. The last two, added on 16 N
 | Clip rectangle | It and its children appear only inside this rectangle, given relative to its own origin | None |
 | Hover look | Another drawing to draw in its place while the viewer's pointer is over it | None |
 | Pressed look | Another drawing to draw in its place while a button or a contact is pressed on it | None |
+| Layer | Which of the four layers a top-level drawing is drawn in, 0 to 3; a child is in its top-level ancestor's layer | 1 |
+| Alternative look | Another drawing to draw in its place while the receiver forces the alternative look | None |
+| Frame list | 1 to 16 drawings, of which the one numbered by the frame in force is drawn in its place | None |
+| Paint rate | How fast the receiver paints it, in hundreds of work units a second; 0 paints it at once | 0 |
 
 - A child moves, hides and clips with its parent.
 - A drawing has exactly one parent. A change of parent applies to the staged scene at once and shows at commit; from then on it moves, hides and clips with the new parent, and is no longer deleted with the old one.
 - A drawing with no contents can still have visible children.
 - **Source:** a drawing with a source draws that drawing's contents and children, so a master can itself be a group. The source's own position, depth, visibility, parent and detectable flag are not used: the drawing that names it decides where and whether it appears. The source's clip rectangle is used, because it is part of how the source looks.
-- **Order within one drawing:** its own contents, or else its source's contents followed by the source's children; then its own children. Children draw in depth order. Clip rectangles along the chain intersect.
+- **Order within one drawing:** its own contents, or else what is drawn in their place (see What is drawn in a drawing's place) followed by that drawing's children; then its own children. Children draw in depth order. Clip rectangles along the chain intersect.
+- **Order among top-level drawings:** by layer, then by depth, then by drawing number.
 - **Coordinates:** a numbered drawing always uses default v1 addressing, one unit per pixel, whatever `S(A)` the base is using. Positions and clip rectangles are in pixels.
 - **Screen position:** the sum of the positions up the parent chain, computed in 32 bits so it cannot overflow.
 - **Range:** inside a drawing, coordinates may use the full 16-bit range. Only the screen edge and clip rectangles cut drawing off, so a scrolling list can be taller than the screen.
@@ -167,6 +173,100 @@ The program that shows the picture (the receiver) can change how drawings look a
 
 Example: `D(S10(I1,H11,A12),S11(V0),S12(V0))` makes drawing 10 detectable, shows drawing 11 in its place while the pointer is over it and drawing 12 while it is pressed.
 
+## Animation
+
+Added on 18 November 2026, by the owner's decision DEC-6524; the requirement is REQ-6530 and the specification is neoteletext-common's `docs/animation.md` (ANIM-9, ANIM-10 and ANIM-12 to ANIM-16). The receiver animates numbered drawings itself: nothing is sent again, and nothing outside the damaged rectangle is replayed.
+
+### Layers
+
+Every picture has four layers, drawn in this order:
+
+| Layer | Name | What is in it |
+| --- | --- | --- |
+| 0 | Background | The base, and every top-level drawing with `G0` |
+| 1 | Scene | Drawings that seldom move. The default |
+| 2 | Sprites | Drawings that move |
+| 3 | Overlay | What must lie over everything: a cursor, a pointer's mark, a caption |
+
+- The attribute `G` names the layer of a top-level drawing. A child is drawn with its parent, in its top-level ancestor's layer, and its own `G` is not used.
+- Within a layer, top-level drawings are drawn by depth, lowest first, then by number.
+- **The background is kept as a raster of its own:** the base with the drawings of layer 0 painted over it, with their part of the pick record. It is repainted only where one of those drawings or the base changes. Layers 1 to 3 are composed over a copy of it, so a drawing that moves in a layer above never causes a background drawing's contents to be replayed: the damaged rectangle is filled by copying the background's pixels.
+- A picture with no drawing in layer 0 keeps no background raster; the base is its background. A v2 application puts what never moves, such as a chart's axes or a game's playfield, in `G0`.
+- **Measured** (18 November 2026, chunko, release build): moving a square of 20 pixels over a filled screen costs 8,977 work units with the filled drawing in layer 1 and 2,509 with it in layer 0, against 783,497 painted whole; the time, 25 to 35 microseconds, is the same in both, being the comparison of the base and the walk of the scene.
+
+### What is drawn in a drawing's place
+
+In order of precedence:
+
+1. a forced look, set by the receiver's animation state: the drawing's hover look (`H`), pressed look (`A`) or alternative look (`N`);
+2. its pressed look, while it is the pressed drawing of the viewer state;
+3. its hover look, while it is the hovered drawing;
+4. the entry of its frame list (`F`) that the frame in force names;
+5. its source (`R`);
+6. its own contents.
+
+- A look that names no existing drawing leaves the next in the order. A frame or a source that names no existing drawing draws nothing.
+- **The frame in force** is 0 unless the receiver's animation state sets it. An entry beyond the end of the list draws the last. A drawing with no frame list ignores the frame.
+- "In its place" means what it means for a source: at this drawing's position, under its clip rectangle, from a fresh context, followed by that drawing's children and then this drawing's own; the pixels belong to this drawing in the pick record.
+- A drawing drawn in another's place does not use its own looks, forced or not, since it is not the drawing the pointer or the receiver named. It does use its own frame list and source, which are part of how it looks.
+- Looks, frames and sources are all references between drawings: none may form a cycle, in any mixture, and chains of them count toward the nesting cap of 16.
+- **Work:** a commit counts, for each drawing, the dearest of its ordinary look, its three looks and every entry of its frame list, so no frame or look the receiver chooses can make a repaint cost more than the commit allowed.
+
+Examples: `D(S40(G2,F(41,42,43,44)),S41(V0),S42(V0),S43(V0),S44(V0),C)` makes drawing 40 a four-frame sprite on the sprites layer whose frames are the hidden drawings 41 to 44. `D(S10(I1,H11,A12,N13))` gives drawing 10 its three looks.
+
+### Animation state
+
+The receiver can set, for at most 64 numbered drawings at once, an animation state (`Terminal::set_animation`, `clear_animation`). Each part that is set is used in place of the committed attribute:
+
+| Part | Stands in for |
+| --- | --- |
+| Shown or hidden | `V` |
+| Position, x and y, signed 16-bit, relative to the parent | `X` and `Y` |
+| Layer, 0 to 3 | `G` |
+| Order, −128 to 127 | The depth, `L` |
+| Frame, 0 to 15 | — it chooses the entry of the frame list |
+| Forced look: none, hover, pressed or alternative | — it chooses a look whatever the pointer does |
+
+- **The picture is, pixel for pixel and in the pick record, that of a scene committed with those values.** It is made by damage repaint under the repaint budget.
+- **It is the receiver's alone**, like the viewer state: nothing in the stream can read or set it.
+- **The last writer wins.** A commit that sets a drawing's `X` or `Y` forgets the state's position for that drawing; `V` its shown part; `L` or `G` its layer and order. Deleting a drawing forgets its whole state, even if the same batch makes a drawing of that number again. A commit that fails forgets nothing.
+- **The moved drawing's own contents are replayed** inside the damage. No cache of its pixels is kept, because a drawing's pixels depend on what lies beneath it (rule 2).
+- **Showing a drawing the stream hid** is refused when it would take a repaint over the cap on rendering work, since a commit does not count hidden drawings: the rest of the state is kept (see `SOLVEDSECURITYISSUES/014`).
+- **Bounding rectangle** (`Terminal::bounds`): for a drawing as its state stands, the rectangle of the screen its contents were measured to reach at its commit, with its shown children's and that of the look or frame in force, moved to its screen position and cut by its clip rectangles and the screen; none while it does not exist, is not shown or reaches no pixel of the screen. Collision and region tests are made on these rectangles, never on pixels.
+- **Frame cycling** is the receiver's: it sets the frame each tick. The renderer has no clock.
+
+### Paint rate
+
+The attribute `T<rate>` makes the receiver paint a drawing gradually, as a v1 picture appears while its bytes arrive (the owner's request of 16 November 2026; DEC-6382, accepted on 18 November 2026).
+
+- **The rate:** 0, the default, paints the drawing at once. A rate from 1 to 32,767 paints what is drawn for the drawing itself (its own contents, or the source, look or frame drawn in its place, with that drawing's children) at `rate` × 100 work units a second: `T1` is a pen moving 100 pixels a second, `T50` 5,000.
+- **What a work unit is here:** a pixel a line or curve visits, the area of a fill or of a character cell, 4 for each degree of an arc, and 64 for each byte a macrograph call expands to. The 64 units a repaint pays for each byte of the contents themselves are not charged to the rate, so that a line's speed does not depend on how many digits its coordinates were written with.
+- **In order, and whole things whole:** the contents are painted from their start up to the first thing the work earned so far cannot pay for. A line appears pixel by pixel; a filled area or a character appears at once when all of its cost has been earned.
+- **When painting starts:** at the commit in which the drawing is new, its contents are defined again, its rate changes, or it becomes visible (itself or a drawing above it); and when the receiver's animation state shows it. A commit that only moves, re-parents, clips or reorders it does not start it again, and a drawing that has finished stays whole.
+- **Children wait.** A child of a drawing still being painted does not appear until the parent has finished; then each child starts, at its own rate, or at once if it has none. When a drawing's painting starts, that of the drawings below it starts with it. Drawings with no common ancestor paint at the same time.
+- **A drawing drawn in another's place** is paid for at the rate of the drawing that placed it; its own rate is not used there.
+- **The receiver supplies the time**, in ticks of a sixtieth of a second (`Terminal::advance_ticks`). After `n` ticks a drawing has earned `n` × rate × 100 ÷ 60 work units, rounded down, counted from the total of its ticks so that nothing is lost to rounding. Ticks left over when a drawing finishes go to its children. The call says whether anything shown is still being painted.
+- **What does not change:** the finished picture is exactly the picture painted at once. The pick record follows the pixels painted so far, so a part not yet drawn cannot be clicked. The commit's checks are unchanged, since a part-painted drawing never costs more than a whole one. A stream that sets no `T` paints exactly as before.
+- **Each step is a damage repaint** of the drawing's rectangle. A part-painted drawing's contents are metered whole at each repaint, wherever the damage lies, so that the part painted is the same part; once finished it is repainted as any drawing is.
+
+Example: `D(S7(T50))` paints drawing 7 at 5,000 work units a second.
+
+### The animation budget
+
+Beside the repaint budget, a receiver holds a page to these (`regis::limits`), slowing the animation and never the viewer's input when one would be passed:
+
+| Constant | Value |
+| --- | --- |
+| `LAYERS` | 4 |
+| `MAX_ANIMATED_DRAWINGS` | 64 drawings holding animation state at once |
+| `MAX_CYCLING_OBJECTS` | 16 drawings cycling their frames at once |
+| `MAX_OBJECT_FRAMES` | 16 entries in a frame list |
+| `MAX_ANIMATION_PIXELS_PER_TICK` | 192,000 pixels repainted for animation in one tick: half a picture |
+| `ANIMATION_WORK_PER_TICK` | 3,333,333 work units a tick: a sixtieth of the repaint budget's second, taken from it |
+| `PAINT_RATE_UNIT` | 100 work units a second for each unit of `T` |
+
+The renderer enforces the first, second and fourth. The others are the receiver's to keep, since they are about time, which the renderer does not have. All are starting values, to be confirmed by measurement.
+
 ## Picking
 
 The renderer can say which numbered drawing lies under any screen position. How input reaches the application, and in what messages, is outside the language.
@@ -234,10 +334,16 @@ This section fixes the syntax of `D`. It follows v1 conventions: options in pare
 | `H` | Hover look | Drawing number, or 0 for none | 0 |
 | `A` | Pressed look (active) | Drawing number, or 0 for none | 0 |
 | `C` | Clip rectangle | `C(X<int>,Y<int>,W<int>,H<int>)`, or `C0` for none | None |
+| `G` | Layer (group) | 0 to 3 | 1 |
+| `N` | Alternative look | Drawing number, or 0 for none | 0 |
+| `F` | Frame list | `F(<n>,<n>,…)`: 1 to 16 drawing numbers from 1 to 65,535, with commas between; or `F0` for none | None |
+| `T` | Paint rate (time) | 0 to 32,767 | 0 |
 
 - Attribute values are 16-bit signed integers, the size v1 uses for coordinates ([chapter 1](https://vt100.net/docs/vt3xx-gp/chapter1.html)).
 - A sign is part of the value and never means a relative move. Bracketed coordinates are not used in `D`, because in v1 a signed number in brackets is relative.
 - Attributes not named in an `S` are left unchanged.
+- The letters were chosen among those `D` had left: `G` for group, since `L` is the depth; `N` for the alternative look, since `A` is the pressed look; `T` for time.
+- Out of range, a value is malformed and fails the batch with code 7: a layer above 3, a rate above 32,767 or below 0, a reference above 65,535, `F` with any number but 0, an empty `F()`, a frame of 0 or above 65,535, a seventeenth frame, or anything in `F(…)` but numbers and commas.
 
 ### Failed commits
 
@@ -248,7 +354,7 @@ A failed commit cannot happen when the sender works correctly, because a sender 
 | 1 | Stored contents cap exceeded | The drawing being defined |
 | 2 | Staged operations cap exceeded | 0 |
 | 3 | Chain deeper than 16 | A drawing in the chain |
-| 4 | Cycle through parent and source links | A drawing in the cycle |
+| 4 | Cycle through parent, source, look and frame links | A drawing in the cycle |
 | 5 | Parent does not exist | The drawing naming it |
 | 6 | Rendering work cap exceeded | 0 |
 | 7 | Malformed `D` operation | The drawing concerned, or 0 |
@@ -269,7 +375,7 @@ There is no garbage collection. Lifetimes are explicit and memory is bounded by 
 
 - A source that does not exist draws nothing and is not an error, as calling an empty macrograph is not an error in v1.
 - Deleting a drawing that others use as a source is therefore allowed. They go blank, and reappear if that number is defined again. No reference counting is needed.
-- No drawing may be reachable from itself by following parent and source links in any combination. For example, drawing 1 with child 2, where 2 uses 1 as its source, is rejected. Chains of parent and source links, counted together, are capped at 16 levels, the figure v1 uses for macrograph nesting. Cycles are checked at every commit, because a later definition can close one.
+- No drawing may be reachable from itself by following parent, source, look and frame links in any combination. For example, drawing 1 with child 2, where 2 uses 1 as its source, is rejected. Chains of parent and source links, counted together, are capped at 16 levels, the figure v1 uses for macrograph nesting. Cycles are checked at every commit, because a later definition can close one.
 
 **Bounds**
 
@@ -287,7 +393,7 @@ Starting values, to be confirmed by measurement. They are derived from the platf
 | Chain depth | 16 | Parent and source links counted together: the nesting reached while drawing. Matches v1 macrograph nesting |
 | Rendering work | 100,000,000 work units per full rebuild, counting 64 for each byte of contents replayed and 64 for each drawing painted beside the pixels visited | Bytes are a poor measure: a few bytes can fill a large circle or draw size-16 text, so the cap is in the renderer's own work units (pixels visited). Measured on the corpus (14 November 2026, M1 Mac mini): full paintings take 12 to 19 million units at the median and 67 million at most (a 274 KB painting); dashboard and game screens take 2 to 4 million. Rendering runs at about 0.7 million units per millisecond, so the cap covers every measured picture with half again in hand and bounds a full rebuild at about 140 ms on that machine. A drawing's work is metered independent of position and clipping, so it is a fixed number per definition. A reused drawing counts each time it is drawn, and macrograph calls count expanded |
 
-Hidden drawings cost storage but no rendering work.
+Hidden drawings cost storage but no rendering work at a commit. A hidden drawing the receiver's animation state shows is counted when it is shown (see Animation state).
 
 Each byte of contents replayed costs 64 units, what a byte out of a macrograph costs in v1, and each drawing painted costs 64 units whether or not it has contents. Without the second, empty drawings that reuse one another many times over would cost nothing to check and unbounded time to walk. Inside a drawing, shaded and filled areas are paid for whole, seen or not, which is what makes a drawing's work the same wherever it is placed.
 
@@ -312,7 +418,8 @@ Each of these was considered and excluded, either because an existing mechanism 
 | Masks | Changes graphical capability beyond the clip rectangle |
 | Binary encoding | A second encoding of the same thing |
 | New primitives, pattern libraries, new coordinate system | v1 already has arcs, interpolated curves ([chapter 6](https://vt100.net/docs/vt3xx-gp/chapter6.html)) and display addressing ([chapter 2](https://vt100.net/docs/vt3xx-gp/chapter2.html)) |
-| Client-side animation, bindings, parameterised drawings | Logic on the client |
+| Bindings, parameterised drawings | Logic on the client |
+| Client-side animation | Left out until 18 November 2026; now built, without logic on the client (see Animation) |
 | Keeping the base picture in the scene | Erase does not reset the colour map or cursor, so rebuilding the base would need the full history of base commands. v2 applications keep their background in a numbered drawing. |
 
 The clip rectangle is the one item kept that v1 cannot do. It adds nothing that can be drawn; it limits where existing drawing appears, and panels and scrolling lists are not possible without it.
@@ -325,6 +432,14 @@ Four tests gate the work, and none is traded for performance.
 2. **Repaint equivalence.** For random sequences of `D` operations and base drawing, the screen after incremental repaint equals a full rebuild from the base and all numbered drawings, in pixels and in the pick record. The sequences must mix parent changes, source redefinitions, complement writing, clipping and macrograph changes.
 3. **Isolation.** A numbered drawing produces the same pixels on a blank base whatever other drawings were defined or repainted before it.
 4. **Failed commit.** For each failure code, a commit that fails leaves the pixels, the pick record and the committed table copy exactly as they were, and reports the matching failure code.
+
+Animation added these (18 November 2026), in `crates/regis/tests/animation.rs`, `damage.rs` and `regis_animation.rs`:
+
+5. **Animation equivalence.** For random scenes and random animation states, the picture and the pick record equal those of the same scene committed with those attribute values.
+6. **Repaint equivalence under animation.** Test 2's sequences also set layers, alternative looks, frame lists, paint rates, animation states and ticks.
+7. **Paint rate.** The picture after `k` ticks holds exactly the pixels the allowance buys; the finished picture equals the picture at once; the pick record at each step.
+8. **Background.** Moving a layer-2 drawing over a costly `G0` drawing replays none of that drawing's contents.
+9. **Bounding rectangles.** Every pixel a drawing writes lies inside its rectangle.
 
 ## Open decisions
 
@@ -356,6 +471,17 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
 10. **Viewer state, added 16 November 2026** (DEC-6366, REQ-6367): the hover look and pressed look attributes, `H` and `A`, and the hovered, pressed and hidden drawings a receiver sets (`Terminal::set_viewer_state`). The proposal had no receiver-drawn response to the pointer.
 
 11. **Repaint budget, added 16 November 2026** (DEC-6366, REQ-6368): the proposal bounded one repaint and not how often one is bought.
+
+12. **Animation, added 18 November 2026** (DEC-6524, DEC-6382; REQ-6530; neoteletext-common `docs/animation.md`): the attributes `G`, `N`, `F` and `T`, the receiver's animation state, the four layers with the background raster, bounding rectangles, and the paint rate on ticks. The proposal carried over "no client-side animation", which the owner withdrew. Where what was built reads the specification one way among several, or adds to it:
+    1. **The paint rate does not charge the bytes of the contents.** DEC-6382 says `rate` × 100 work units a second and that `T1` is a pen moving 100 pixels a second. A repaint's work units include 64 for each byte of contents replayed, which would make a short line of ten bytes take six seconds at `T1`; so the rate pays for everything but those.
+    2. **"Given a rate" is a rate that changes.** A commit that sets the rate a drawing already has does not start its painting again; to play it again, define its contents again or hide and show it.
+    3. **When a drawing's painting starts, that of the drawings below it starts too**, since they wait for it and then start "in their turn".
+    4. **A drawing drawn in another's place uses its frame list and not its looks or its paint rate.** The specification says a frame is drawn "as a source is" and that looks belong to the drawing under the pointer; the rate follows the drawing that placed it.
+    5. **Showing a hidden drawing can be refused** (`SOLVEDSECURITYISSUES/014`): the specification's "no animation state can make a repaint cost more than the commit allowed" did not hold for the shown part, because a commit does not count hidden drawings.
+    6. **A drawing still being painted has the bounding rectangle it will have when finished**, so that collisions do not change as it appears.
+    7. **A part-painted drawing is metered whole at every repaint**, where a finished one pays only for the part repainted.
+    8. **`Terminal::animation` and `Terminal::drawing_position`** were added beside the four calls the specification names: a receiver reads the first after a commit to learn what the stream wrote over, and a relative move adds to the second.
+    9. **No fuzzing engine drives the target `regis_animation`**, because the workspace has no library: it is a function run on kept and generated inputs (`crates/regis/tests/regis_animation.rs`).
 
 The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
 
