@@ -69,9 +69,31 @@ impl Mask {
     }
 
     fn mark_span(&mut self, from: i32, to: i32, y: i32) {
-        for x in from.max(self.left)..=to.min(self.left + self.width - 1) {
-            self.mark(x, y);
+        let (from, to) = (from.max(self.left), to.min(self.left + self.width - 1));
+        if from > to || !(0..self.height).contains(&(y - self.top)) {
+            return;
         }
+        let start = to_usize(y - self.top) * to_usize(self.width);
+        let span = start + to_usize(from - self.left)..=start + to_usize(to - self.left);
+        if let Some(cells) = self.set.get_mut(span) {
+            cells.fill(true);
+        }
+    }
+
+    /// The runs of marked pixels of each row, as (first, last, row) in
+    /// the coordinates drawing uses.
+    fn runs(&self) -> impl Iterator<Item = (i32, i32, i32)> + '_ {
+        let width = to_usize(self.width).max(1);
+        self.set.chunks(width).zip(self.top..).flat_map(move |(row, y)| {
+            let mut at = 0;
+            core::iter::from_fn(move || {
+                let first = at + row.get(at..)?.iter().position(|set| *set)?;
+                let length = row.get(first..)?.iter().position(|set| !*set).unwrap_or(row.len() - first);
+                at = first + length;
+                let left = self.left + i32::try_from(first).unwrap_or(0);
+                Some((left, left + i32::try_from(length).unwrap_or(0) - 1, y))
+            })
+        })
     }
 }
 
@@ -145,11 +167,9 @@ pub(crate) fn fill_polygon(painter: &mut Painter<'_>, vertices: &[Point]) -> boo
         }
     }
 
-    for (index, _) in mask.set.iter().enumerate().filter(|(_, set)| **set) {
-        let width = to_usize(mask.width);
-        let x = mask.left + i32::try_from(index % width).unwrap_or(0);
-        let y = mask.top + i32::try_from(index / width).unwrap_or(0);
-        painter.fill_pixel(x, y);
+    // Each pixel is written once, a row's run of them at a time.
+    for (from, to, y) in mask.runs() {
+        painter.fill_run(from, to, y);
     }
     true
 }

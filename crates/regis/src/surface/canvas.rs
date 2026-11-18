@@ -344,6 +344,51 @@ impl Canvas {
         }
     }
 
+    /// Changes the pixels of one row from `from` to `to`, both included,
+    /// through `change`, as [`update`](Self::update) would one by one: the
+    /// window is applied to the run once, not to each pixel, which is what
+    /// makes a filled area cost its pixels and no more.
+    pub(crate) fn update_run(&mut self, from: i32, to: i32, y: i32, change: impl Fn(u8) -> Option<u8>) {
+        if from > to {
+            return;
+        }
+        self.reach(from, y);
+        self.reach(to, y);
+        let window = self.window;
+        let y = y.saturating_add(window.dy);
+        if y < window.top.max(0) || y > window.bottom.min(Self::height_i32().saturating_sub(1)) {
+            return;
+        }
+        let left = from.saturating_add(window.dx).max(window.left).max(0);
+        let right = to.saturating_add(window.dx).min(window.right).min(Self::width_i32().saturating_sub(1));
+        let (Some(start), Some(end)) = (Self::index(left, y), Self::index(right, y)) else { return };
+        if start > end {
+            return;
+        }
+        let Some(pixels) = self.pixels.get_mut(start..=end) else { return };
+        let mut written = false;
+        for pixel in pixels {
+            if let Some(value) = change(*pixel) {
+                *pixel = value & PLANE_MASK;
+                written = true;
+            }
+        }
+        if !written {
+            return;
+        }
+        self.changed = true;
+        if window.pick != 0 {
+            // The record is made when the first detectable drawing writes
+            // a pixel (`docs/regis-v2.md`, "Picking").
+            if self.pick.is_empty() {
+                self.pick = vec![0; Self::area()];
+            }
+            if let Some(targets) = self.pick.get_mut(start..=end) {
+                targets.fill(window.pick);
+            }
+        }
+    }
+
     /// Sets every pixel to one colour-map address.
     pub(crate) fn clear(&mut self, value: u8) {
         self.pixels.fill(value & PLANE_MASK);
