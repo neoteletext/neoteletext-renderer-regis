@@ -152,6 +152,30 @@ pub const MAX_LABEL_BYTES: usize = 64;
 /// 2.8). One short line, as a label is.
 pub const MAX_TITLE_BYTES: usize = 64;
 
+/// The alphabet of the first of NeoTeletext's provided character sets:
+/// `T(A100)` selects set 0 and `T(A154)` set 54 (`docs/regis-v2.md`,
+/// "Provided character sets"; renderer-parity.md PAR-12). The VT340's own
+/// alphabets are 0 to 3 (manual chapter 7, "Select Character Set"), so the
+/// numbers between stay unused.
+pub const FIRST_PROVIDED_ALPHABET: u8 = 100;
+/// The provided character sets (DEC-6669 item 1): the engine's
+/// `FONT_SET_COUNT`, which each caller linking both asserts equal.
+pub const PROVIDED_SETS: u8 = 55;
+/// The positions of a provided set: 2/0 to 7/15, as every teletext set has.
+pub const PROVIDED_SET_POSITIONS: usize = 96;
+/// The widest glyph of a provided set, in pixels: one `u16` row (the
+/// engine's glyphs are 12 wide).
+pub const MAX_PROVIDED_GLYPH_WIDTH: u8 = 16;
+/// The tallest glyph of a provided set, in pixels (the engine's are 20).
+pub const MAX_PROVIDED_GLYPH_HEIGHT: u8 = 32;
+
+// A glyph row is one u16, its most significant used bit the left pixel.
+const _: () = assert!(MAX_PROVIDED_GLYPH_WIDTH as u32 == u16::BITS);
+// 2/0 to 7/15.
+const _: () = assert!(PROVIDED_SET_POSITIONS == 0x80 - 0x20);
+// The last provided alphabet, 154, fits the u8 the alphabets are named in.
+const _: () = assert!(FIRST_PROVIDED_ALPHABET as u32 + PROVIDED_SETS as u32 - 1 == 154);
+
 // Half a picture, as ANIM-16 derives the figure.
 const _: () =
     assert!(MAX_ANIMATION_PIXELS_PER_TICK == crate::surface::SCREEN_WIDTH * crate::surface::SCREEN_HEIGHT / 2);

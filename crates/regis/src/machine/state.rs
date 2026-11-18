@@ -131,6 +131,10 @@ impl Machine {
         self.characters.font = font;
     }
 
+    pub(crate) fn set_provided_set(&mut self, number: usize, set: crate::provided::ProvidedSet) {
+        self.characters.set_provided(number, set);
+    }
+
     pub(crate) fn set_macrograph_reports(&mut self, allowed: bool) {
         self.macrograph_reports = allowed;
     }

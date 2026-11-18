@@ -3,12 +3,13 @@
 use super::Machine;
 use super::command::errors;
 use super::frames::Context;
-use super::lettering::LOADABLE_SETS;
+use super::lettering::{LOADABLE_SETS, provided_number};
 use crate::font::Glyph;
 use crate::geometry::Point;
 use crate::lexer::Token;
 use crate::limits::MAX_TEXT_STACK;
 use crate::number::Number;
+use crate::provided::forms;
 use crate::surface::Screen;
 use crate::text::draw_character;
 
@@ -16,6 +17,12 @@ const BACKSPACE: u8 = 0x08;
 const TAB: u8 = 0x09;
 const LINE_FEED: u8 = 0x0A;
 const CARRIAGE_RETURN: u8 = 0x0D;
+
+/// The text control characters a string obeys (manual chapter 7), at which
+/// joining ends (PAR-13).
+const fn is_text_control(code: u8) -> bool {
+    matches!(code, BACKSPACE | TAB | LINE_FEED | CARRIAGE_RETURN)
+}
 
 impl Machine {
     pub(super) fn text_option(&mut self, token: &Token) {
@@ -52,7 +59,11 @@ impl Machine {
         let value = number.value();
         match self.syntax.option_letter() {
             b'A' => {
-                if let Ok(alphabet @ 0..=LOADABLE_SETS) = usize::try_from(value) {
+                // The VT340's alphabets 0 to 3, and NeoTeletext's provided
+                // sets as 100 to 154 (PAR-12); any other is ignored.
+                if let Ok(alphabet) = usize::try_from(value)
+                    && (alphabet <= LOADABLE_SETS || provided_number(alphabet).is_some())
+                {
                     self.text.controls.alphabet = alphabet;
                 }
             }
@@ -87,12 +98,13 @@ impl Machine {
 
     /// The shape of a character in the set now selected.
     pub(super) fn glyph(&self, code: u8, unit_height: i32) -> Glyph {
-        self.characters.glyph(self.text.controls.alphabet, code, unit_height)
+        self.characters.glyph(self.text.controls.alphabet, code, None, unit_height)
     }
 
     /// Draws a quoted string from the active position.
     pub(super) fn draw_string(&mut self, screen: &mut Screen, text: &[u8]) {
-        for &code in text {
+        let alphabet = self.text.controls.alphabet;
+        for (index, &code) in text.iter().enumerate() {
             let (dx, dy) = self.text.controls.advance();
             match code {
                 CARRIAGE_RETURN => self.position = self.text.line_start,
@@ -106,7 +118,12 @@ impl Machine {
                 BACKSPACE => self.shift((dx.saturating_neg(), dy.saturating_neg())),
                 TAB => self.shift((dx, dy)),
                 _ => {
-                    let glyph = self.glyph(code, self.text.controls.unit.1);
+                    // A joined provided set gives a letter the form its
+                    // neighbours in this string give it (PAR-13); a string
+                    // is one alphabet's, so joining ends with it.
+                    let form =
+                        self.characters.provided_set(alphabet).and_then(|set| forms(set, text, index, is_text_control));
+                    let glyph = self.characters.glyph(alphabet, code, form, self.text.controls.unit.1);
                     let (origin, controls) = (self.pixel(), self.text.controls);
                     self.paint(screen, |painter| draw_character(painter, &glyph, origin, &controls));
                     self.shift((dx, dy));

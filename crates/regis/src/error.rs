@@ -16,6 +16,13 @@ pub enum Error {
     },
     /// Font text is longer than [`crate::limits::MAX_FONT_BYTES`].
     FontTooLong,
+    /// A provided set's glyph is outside its bounds: a size past
+    /// [`crate::limits::MAX_PROVIDED_GLYPH_WIDTH`] by
+    /// [`crate::limits::MAX_PROVIDED_GLYPH_HEIGHT`], a code outside 2/0 to
+    /// 7/15, or rows that are not the set's.
+    ProvidedSet,
+    /// A provided set's number is [`crate::limits::PROVIDED_SETS`] or more.
+    ProvidedSetNumber,
 }
 
 impl fmt::Display for Error {
@@ -23,6 +30,8 @@ impl fmt::Display for Error {
         match self {
             Self::Font { line } => write!(f, "font text is malformed at line {line}"),
             Self::FontTooLong => f.write_str("font text is too long"),
+            Self::ProvidedSet => f.write_str("a provided set's glyph is outside its bounds"),
+            Self::ProvidedSetNumber => f.write_str("there is no provided set of that number"),
         }
     }
 }

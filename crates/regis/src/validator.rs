@@ -4,8 +4,10 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::Error;
 use crate::event::Event;
 use crate::font::Font;
+use crate::provided::ProvidedSet;
 use crate::scene::CommittedDrawing;
 use crate::surface::Screen;
 use crate::terminal::Terminal;
@@ -41,6 +43,16 @@ impl Validator {
     /// [`Terminal::set_font`] does.
     pub fn set_font(&mut self, font: Font) {
         self.terminal.set_font(font);
+    }
+
+    /// Supplies a provided character set, as
+    /// [`Terminal::set_provided_set`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Terminal::set_provided_set`]'s.
+    pub fn set_provided_set(&mut self, number: u8, set: ProvidedSet) -> Result<(), Error> {
+        self.terminal.set_provided_set(number, set)
     }
 
     /// Feeds ReGIS commands, as [`Terminal::feed_regis`] does.

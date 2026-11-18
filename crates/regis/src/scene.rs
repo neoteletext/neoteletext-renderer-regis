@@ -159,6 +159,14 @@ impl Scene {
         self.tables_version = self.tables_version.wrapping_add(1);
     }
 
+    pub(crate) fn set_provided_set(&mut self, number: usize, set: crate::provided::ProvidedSet) {
+        self.player.machine.set_provided_set(number, set);
+        // As a font does: the shapes decide where text reaches.
+        self.committed.forget_measurements();
+        self.staged.forget_measurements();
+        self.tables_version = self.tables_version.wrapping_add(1);
+    }
+
     pub(crate) const fn commits(&self) -> u32 {
         self.commits
     }

@@ -125,6 +125,7 @@ fn reset(player: &mut Interpreter) {
     core::mem::swap(&mut fresh.palette, &mut player.machine.palette);
     core::mem::swap(&mut fresh.characters.font, &mut player.machine.characters.font);
     core::mem::swap(&mut fresh.characters.sets, &mut player.machine.characters.sets);
+    core::mem::swap(&mut fresh.characters.provided, &mut player.machine.characters.provided);
     player.machine = fresh;
 }
 

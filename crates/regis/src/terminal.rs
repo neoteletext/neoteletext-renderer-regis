@@ -6,9 +6,12 @@ mod stream;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::Error;
 use crate::event::Event;
 use crate::font::Font;
+use crate::limits::PROVIDED_SETS;
 use crate::palette::Palette;
+use crate::provided::ProvidedSet;
 use crate::scene::{AnimationState, CommittedDrawing, Picture, Rectangle, Scene, ViewerState};
 use crate::surface::Screen;
 pub(crate) use source::Interpreter;
@@ -47,6 +50,28 @@ impl Terminal {
     pub fn set_font(&mut self, font: Font) {
         self.scene.set_font(font.clone());
         self.base.machine.set_font(font);
+    }
+
+    /// Supplies one of NeoTeletext's provided character sets, which a page
+    /// selects as alphabet [`FIRST_PROVIDED_ALPHABET`] plus `number`
+    /// (`docs/regis-v2.md`, "Provided character sets"; renderer-parity.md
+    /// PAR-12). Set `n` is set `n` of the engine's `FONT_SETS`. A provided
+    /// alphabet whose set was never given draws empty cells.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ProvidedSetNumber`] when `number` is
+    /// [`PROVIDED_SETS`] or more; nothing changes then.
+    ///
+    /// [`FIRST_PROVIDED_ALPHABET`]: crate::limits::FIRST_PROVIDED_ALPHABET
+    /// [`PROVIDED_SETS`]: crate::limits::PROVIDED_SETS
+    pub fn set_provided_set(&mut self, number: u8, set: ProvidedSet) -> Result<(), Error> {
+        if number >= PROVIDED_SETS {
+            return Err(Error::ProvidedSetNumber);
+        }
+        self.scene.set_provided_set(usize::from(number), set.clone());
+        self.base.machine.set_provided_set(usize::from(number), set);
+        Ok(())
     }
 
     /// Allows `R(M(letter))` to report a macrograph's contents. It is off

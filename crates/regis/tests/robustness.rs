@@ -26,15 +26,41 @@ impl Random {
 /// Bytes weighted toward what ReGIS gives meaning to.
 fn random_page(random: &mut Random, length: usize) -> Vec<u8> {
     const LIKELY: &[u8] = b"SWPVCTLRF()[],;@:.'\"0123456789+-ABEHIMNXDUabcdef \n\x1b\\P p";
-    (0..length)
-        .map(|_| {
-            if random.below(8) == 0 {
-                u8::try_from(random.below(256)).unwrap()
-            } else {
-                LIKELY[random.below(LIKELY.len())]
-            }
-        })
-        .collect()
+    let mut page = Vec::with_capacity(length);
+    while page.len() < length {
+        if random.below(64) == 0 {
+            // An alphabet selection or load around the provided alphabets
+            // 100 to 154, past them, or among the VT340's own (PAR-12).
+            let alphabet = random.below(160);
+            let command = if random.below(4) == 0 { "L" } else { "T" };
+            page.extend(format!("{command}(A{alphabet})").bytes());
+        } else if random.below(8) == 0 {
+            page.push(u8::try_from(random.below(256)).unwrap());
+        } else {
+            page.push(LIKELY[random.below(LIKELY.len())]);
+        }
+    }
+    page
+}
+
+/// A terminal with the shipped font and two provided sets, one of them
+/// joined, so that random alphabet selections draw through both paths.
+fn terminal_with_provided_sets() -> regis::Terminal {
+    use regis::{JoinedForm, JoiningType, ProvidedSet};
+    let mut terminal = common::terminal();
+    let mut plain = ProvidedSet::new(12, 20).unwrap();
+    let mut joined = ProvidedSet::new(16, 32).unwrap();
+    for code in 0x20..=0x7F_u8 {
+        plain.set_glyph(code, &[0x0F0F; 20]).unwrap();
+        joined.set_glyph(code, &[0xF00F; 32]).unwrap();
+        let kind =
+            [JoiningType::None, JoiningType::Right, JoiningType::Dual, JoiningType::Transparent][usize::from(code % 4)];
+        joined.set_joining(code, kind).unwrap();
+        joined.set_form(code, JoinedForm::Medial, &[0xFFFF; 32]).unwrap();
+    }
+    terminal.set_provided_set(0, plain).unwrap();
+    terminal.set_provided_set(44, joined).unwrap();
+    terminal
 }
 
 fn feed_random_pages(pages: usize, seed: u64) {
@@ -42,7 +68,7 @@ fn feed_random_pages(pages: usize, seed: u64) {
     for _ in 0..pages {
         let length = random.below(3000);
         let page = random_page(&mut random, length);
-        let mut terminal = common::terminal();
+        let mut terminal = terminal_with_provided_sets();
         terminal.allow_macrograph_reports(true);
         let mut screen = Screen::new();
         for chunk in page.chunks(37) {
