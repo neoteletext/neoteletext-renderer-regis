@@ -151,6 +151,8 @@ for (index, pixel) in page.pixels().iter().enumerate() {
 <tr><td><code>Terminal::clear_animation(number)</code></td><td>Forgets it: the drawing is painted as committed.</td></tr>
 <tr><td><code>Terminal::animation(number)</code></td><td>The state held. A commit that sets the same attribute writes over a part of it, and a deletion over all of it.</td></tr>
 <tr><td><code>Terminal::drawing_position(number)</code></td><td>The position in force, which a relative move adds to.</td></tr>
+<tr><td><code>Terminal::committed_drawing(number)</code></td><td>What the stream committed for the drawing, apart from the animation state: shown (<code>V</code>), layer (<code>G</code>) and depth order (<code>L</code>). Nothing when the drawing does not exist.</td></tr>
+<tr><td><code>Terminal::visible_drawing()</code></td><td>The lowest-numbered top-level drawing that is shown and reaches the screen, or nothing. <code>Validator</code> has the same two calls: a server asks after feeding a sprite sheet, which must leave no drawing visible.</td></tr>
 <tr><td><code>Terminal::bounds(number)</code></td><td>The drawing's bounding <code>Rectangle</code> on the screen, for collision and region tests; <code>None</code> while it is not shown.</td></tr>
 <tr><td><code>Terminal::advance_ticks(ticks)</code></td><td>Says that ticks of a sixtieth of a second have passed. Drawings with a paint rate (<code>T</code>) are painted that much further at the next <code>compose</code>. True while anything is still being painted.</td></tr>
 </table>

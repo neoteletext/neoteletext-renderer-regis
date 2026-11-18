@@ -10,8 +10,11 @@ rust-version = "1.97"
 license = "MIT"
 publish = false
 
-# No library is used. The renderer, the image writers and the tools are all
-# written here; a library would need the owner's approval by name.
+# The renderer, the image writers and the tools use no library: all are
+# written here, and a library would need the owner's approval by name. The
+# one exception is crates/regis-fuzz, whose tests are driven by proptest
+# (DEC-6603, under the owner's DEC-6579); nothing that builds the renderer
+# in builds it.
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

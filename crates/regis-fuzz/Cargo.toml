@@ -1,0 +1,23 @@
+[package]
+name = "regis-fuzz"
+version = "0.1.0"
+description = "The renderer's fuzz targets, driven by property testing; a crate of its own so that the renderer keeps no dependency"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+regis = { path = "../regis" }
+regis-fonts = { path = "../regis-fonts" }
+# MIT OR Apache-2.0. Drives the fuzz targets: it makes the inputs, new ones
+# on every run, and reduces one that fails to the least that still does. It
+# is pure Rust across its dependency tree, which is what DEC-6579 approves
+# (DEC-6603 records it by name); cargo-fuzz's libfuzzer-sys builds C++ and
+# is not approved. Only `std` of its features: the default set adds
+# rusty-fork and tempfile, to run cases in child processes, which nothing
+# here needs.
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

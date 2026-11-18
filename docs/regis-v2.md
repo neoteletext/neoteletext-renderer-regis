@@ -433,13 +433,15 @@ Four tests gate the work, and none is traded for performance.
 3. **Isolation.** A numbered drawing produces the same pixels on a blank base whatever other drawings were defined or repainted before it.
 4. **Failed commit.** For each failure code, a commit that fails leaves the pixels, the pick record and the committed table copy exactly as they were, and reports the matching failure code.
 
-Animation added these (18 November 2026), in `crates/regis/tests/animation.rs`, `damage.rs` and `regis_animation.rs`:
+Animation added these (18 November 2026), in `crates/regis/tests/animation.rs`, `damage.rs` and `measure.rs`, `crates/regis-fuzz/tests/regis_animation.rs` and `crates/regis-render/tests/golden.rs`:
 
 5. **Animation equivalence.** For random scenes and random animation states, the picture and the pick record equal those of the same scene committed with those attribute values.
 6. **Repaint equivalence under animation.** Test 2's sequences also set layers, alternative looks, frame lists, paint rates, animation states and ticks.
 7. **Paint rate.** The picture after `k` ticks holds exactly the pixels the allowance buys; the finished picture equals the picture at once; the pick record at each step.
 8. **Background.** Moving a layer-2 drawing over a costly `G0` drawing replays none of that drawing's contents.
 9. **Bounding rectangles.** Every pixel a drawing writes lies inside its rectangle.
+10. **Golden image sequences.** `regis-render --frames` plays five fixtures (the attributes' examples, the same drawings in each layer and order, a four-frame cycle by both formulas, a drawing with two children painted at their rates), and each image's checksum is held to `crates/regis-render/tests/golden/sequences.txt`, which carries a format version.
+11. **The cost of a move.** Moving a 20-pixel drawing 4 pixels over a background drawing and 30 others, measured on 18 November 2026: 1,178,384 work units and 5.4 ms (release build) by a commit with the whole picture rebuilt; 8,965 work units on average, 10,996 at most, and 37 microseconds by animation state. The work is held to 12,000 units a move.
 
 ## Open decisions
 
@@ -481,7 +483,8 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
     6. **A drawing still being painted has the bounding rectangle it will have when finished**, so that collisions do not change as it appears.
     7. **A part-painted drawing is metered whole at every repaint**, where a finished one pays only for the part repainted.
     8. **`Terminal::animation` and `Terminal::drawing_position`** were added beside the four calls the specification names: a receiver reads the first after a commit to learn what the stream wrote over, and a relative move adds to the second.
-    9. **No fuzzing engine drives the target `regis_animation`**, because the workspace has no library: it is a function run on kept and generated inputs (`crates/regis/tests/regis_animation.rs`).
+    9. **Property testing drives the target `regis_animation`** (DEC-6603, under DEC-6579): `crates/regis-fuzz/tests/regis_animation.rs` runs it on every kept input, then on inputs the library proptest makes anew on each run, reduces an input that fails and keeps it. The library is a development dependency of the crate `regis-fuzz` alone; the renderer has none. cargo-fuzz's engine is C++ and is not used.
+    10. **`Terminal::committed_drawing` and `Terminal::visible_drawing`, with the same two on `Validator`,** were added for the page rule table and the server (neoteletext-common `docs/page-rules.md`, RULE-26; `docs/animation.md`, ANIM-17). The first gives a drawing's shown part, layer and depth order as the stream committed them, apart from the animation state, and `None` when it does not exist. The second names the lowest-numbered top-level drawing that is shown and has a bounding rectangle on the screen; a server refuses a sprite sheet that leaves one. A shown drawing that writes nothing on the screen is not one, and the rectangle is the one measured at the commit, so a drawing whose rectangle touches the screen while its pixels do not is named too.
 
 The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
 
