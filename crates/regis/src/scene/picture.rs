@@ -14,6 +14,9 @@ use crate::surface::{Bounds, Canvas, Screen, Window};
 #[derive(Clone, Debug)]
 pub(super) struct Painted {
     pub(super) steps: Vec<Step>,
+    /// How many of the steps, the first ones, are the background's: the
+    /// top-level drawings of layer 0 and what nests in them.
+    pub(super) background: usize,
     /// The base's pixels.
     pub(super) base: Vec<u8>,
     pub(super) palette: Palette,
@@ -46,6 +49,12 @@ pub struct Picture {
     /// changed.
     previous: Vec<u8>,
     pub(super) painted: Option<Painted>,
+    /// The background raster: the base with the drawings of layer 0 over
+    /// it, repainted only when one of those changes, so that a drawing
+    /// moving in a layer above never has them replayed (animation.md,
+    /// ANIM-12). `None` while no drawing is in layer 0: the base is then
+    /// the background.
+    pub(super) background: Option<Screen>,
     /// The screen position of each detectable drawing painted.
     origins: BTreeMap<u16, (i32, i32)>,
     commits: u32,
@@ -67,6 +76,7 @@ impl Picture {
             screen: Screen::single(),
             previous: Vec::new(),
             painted: None,
+            background: None,
             origins: BTreeMap::new(),
             commits: 0,
             work: 0,
@@ -149,8 +159,9 @@ impl Picture {
         self.canvas().pixels().get(rows).unwrap_or(&[])
     }
 
-    /// Starts a picture: the base's pixels are put back in the rectangle
-    /// to be repainted, or everywhere when the picture is painted whole.
+    /// Starts a picture: the background's pixels and pick record are put
+    /// back in the rectangle to be repainted, or everywhere when the
+    /// picture is painted whole.
     pub(super) fn begin(
         &mut self,
         base: &Canvas,

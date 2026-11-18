@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use crate::event::Event;
 use crate::font::Font;
 use crate::palette::Palette;
-use crate::scene::{Picture, Scene, ViewerState};
+use crate::scene::{AnimationState, Picture, Rectangle, Scene, ViewerState};
 use crate::surface::Screen;
 pub(crate) use source::Interpreter;
 use stream::{Step, Stream};
@@ -115,6 +115,78 @@ impl Terminal {
     /// when there may be something new to show.
     pub fn set_viewer_state(&mut self, state: ViewerState) -> bool {
         self.scene.set_viewer_state(state)
+    }
+
+    /// Sets the animation state of a numbered drawing: the receiver's own
+    /// position, shown or hidden, layer, order, frame and forced look for
+    /// it, each used in place of what the stream committed (neoteletext-
+    /// common `docs/animation.md`, ANIM-6 and ANIM-9). The next
+    /// [`Terminal::compose`] paints accordingly, repainting only what the
+    /// change damaged; the picture is that of a scene committed with those
+    /// values. A state that sets nothing clears the drawing's state.
+    ///
+    /// At most [`MAX_ANIMATED_DRAWINGS`](crate::limits::MAX_ANIMATED_DRAWINGS)
+    /// drawings hold state at once. It returns false when the state was
+    /// not kept as given: the drawing does not exist or the table is full
+    /// (nothing is kept), or showing a drawing the stream hid would take
+    /// one repaint over [`MAX_REBUILD_WORK`](crate::limits::MAX_REBUILD_WORK)
+    /// (the state is kept without its shown part).
+    ///
+    /// The last writer wins: a commit that sets a drawing's `X` or `Y`
+    /// forgets the state's position, `V` its shown part, `L` or `G` its
+    /// layer and order, and a deletion the whole state.
+    /// [`Terminal::animation`] says what is held.
+    pub fn set_animation(&mut self, number: u16, state: AnimationState) -> bool {
+        self.scene.set_animation(number, state)
+    }
+
+    /// Forgets the animation state of a numbered drawing: it is painted
+    /// as the stream committed it.
+    pub fn clear_animation(&mut self, number: u16) {
+        self.scene.clear_animation(number);
+    }
+
+    /// The animation state a numbered drawing holds; `None` when it holds
+    /// none. A receiver reads it after a commit to learn what the stream
+    /// wrote over.
+    #[must_use]
+    pub fn animation(&self, number: u16) -> Option<AnimationState> {
+        self.scene.animation(number)
+    }
+
+    /// The position in force of a numbered drawing, x then y, in pixels
+    /// relative to its parent: its animation state's, else its attributes
+    /// `X` and `Y`. `None` when the drawing does not exist. It is what a
+    /// relative move adds to (ANIM-6).
+    #[must_use]
+    pub fn drawing_position(&self, number: u16) -> Option<(i16, i16)> {
+        self.scene.drawing_position(number)
+    }
+
+    /// The bounding rectangle of a numbered drawing in the picture's
+    /// pixels, as its state stands: where its contents were measured to
+    /// reach at its commit, with its shown children and the look or frame
+    /// in force, moved to its screen position and cut by its clip
+    /// rectangles and the screen (ANIM-13). `None` while the drawing does
+    /// not exist, is not shown, or reaches no pixel of the screen. Every
+    /// pixel the drawing writes lies inside it. A drawing still being
+    /// painted gradually has the rectangle it will have when finished.
+    #[must_use]
+    pub fn bounds(&self, number: u16) -> Option<Rectangle> {
+        self.scene.bounds(number)
+    }
+
+    /// Says that `ticks` of the presentation clock, 60 to the second,
+    /// have passed (ANIM-1, ANIM-15). Each drawing being painted
+    /// gradually, by its paint rate `T`, has then earned `ticks × rate ×
+    /// 100 ÷ 60` work units since its painting started, counted from the
+    /// total of its ticks; the next [`Terminal::compose`] paints what
+    /// that buys. It returns true while a shown drawing is still being
+    /// painted, so that a caller knows to call again; `advance_ticks(0)`
+    /// only asks. A caller that wants every drawing whole at once passes
+    /// `u32::MAX`.
+    pub fn advance_ticks(&mut self, ticks: u32) -> bool {
+        self.scene.advance_ticks(ticks)
     }
 
     /// Makes the picture to show: the displayed page of `base`, the screen

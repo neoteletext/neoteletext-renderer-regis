@@ -1,9 +1,11 @@
 //! Damage repaint: a picture repainted where it changed is the picture
-//! painted whole (`docs/regis-v2.md`, "Commit and repaint"; REQ-6329).
+//! painted whole (`docs/regis-v2.md`, "Commit and repaint"; REQ-6329),
+//! under any animation state, in every layer and part-way through gradual
+//! painting too (animation.md, ANIM-9, ANIM-12 and ANIM-15; REQ-6530).
 
 mod common;
 
-use regis::{Picture, Screen, Terminal, ViewerState};
+use regis::{AnimationState, ForcedLook, Picture, Screen, Terminal, ViewerState};
 
 /// A linear congruential generator, so the tests need no library and
 /// always run the same sequences.
@@ -56,7 +58,7 @@ fn operation(random: &mut Random) -> String {
     let drawing = random.drawing();
     let other = random.below(9);
     let (x, y) = random.place();
-    match random.below(16) {
+    match random.below(20) {
         0..=2 => format!("D(B{drawing}){}D(E)", random.pick(&CONTENTS)),
         3..=5 => format!("D(S{drawing}(X{x},Y{y}))"),
         6 => format!("D(S{drawing}(P{other}))"),
@@ -81,7 +83,30 @@ fn operation(random: &mut Random) -> String {
             random.below(100)
         ),
         14 => format!("@:A{}@;", random.pick(&CONTENTS[..6])),
+        // The attributes of animation (animation.md, ANIM-10): a layer,
+        // an alternative look, a frame list and a paint rate.
+        15 => format!("D(S{drawing}(G{}))", random.below(4)),
+        16 => format!("D(S{drawing}(N{other}))"),
+        17 if other == 0 => format!("D(S{drawing}(F0))"),
+        17 => format!("D(S{drawing}(F({other},{})))", random.drawing()),
+        18 => format!("D(S{drawing}(T{}))", random.below(3) * (1 + random.below(40))),
         _ => "D(Z)".to_string(),
+    }
+}
+
+/// A random animation state.
+fn animation(random: &mut Random) -> AnimationState {
+    let small = |random: &mut Random, bound: u32| u8::try_from(random.below(bound)).unwrap();
+    AnimationState {
+        shown: (random.below(3) == 0).then(|| random.below(2) == 0),
+        position: (random.below(2) == 0).then(|| {
+            let (x, y) = random.place();
+            (i16::try_from(x).unwrap(), i16::try_from(y).unwrap())
+        }),
+        layer: (random.below(3) == 0).then(|| small(random, 4)),
+        order: (random.below(3) == 0).then(|| i8::try_from(random.below(5)).unwrap()),
+        frame: small(random, 3),
+        look: ForcedLook::from_code(small(random, 4)).unwrap(),
     }
 }
 
@@ -117,6 +142,18 @@ fn compare(seed: u64, streams: u32, steps: u32) {
                 let mut number = || u16::try_from(random.below(9)).unwrap();
                 let _ =
                     terminal.set_viewer_state(ViewerState { hovered: number(), pressed: number(), hidden: number() });
+            }
+            // The receiver's animation state and its clock (ANIM-9,
+            // ANIM-15): neither is in the stream.
+            if random.below(2) == 0 {
+                let number = u16::try_from(random.drawing()).unwrap();
+                let _ = terminal.set_animation(number, animation(&mut random));
+            }
+            if random.below(8) == 0 {
+                terminal.clear_animation(u16::try_from(random.drawing()).unwrap());
+            }
+            if random.below(2) == 0 {
+                let _ = terminal.advance_ticks(random.below(40));
             }
             terminal.compose(&screen, &mut kept);
             let mut fresh = Picture::new();

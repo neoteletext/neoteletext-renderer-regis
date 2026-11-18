@@ -6,14 +6,18 @@
 //! fails and throws it away. The committed scene is painted when the
 //! caller asks for a picture.
 
+mod animation;
 mod capture;
 mod commit;
 mod paint;
 mod picture;
 mod stage;
 
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
+use animation::Written;
+pub use animation::{AnimationState, ForcedLook, Rectangle};
 use capture::{Capture, Captured};
 pub use picture::{Pick, Picture};
 use stage::Stage;
@@ -67,6 +71,8 @@ struct Batch {
     /// The output map as the batch found it: shown until the commit, and
     /// put back if the commit fails.
     palette: Palette,
+    /// What its operations wrote over in the animation state.
+    written: BTreeMap<u16, Written>,
 }
 
 /// Every numbered drawing, and what is being done to them.
@@ -91,6 +97,17 @@ pub(crate) struct Scene {
     /// Replays drawings' contents; it holds the committed tables.
     player: Interpreter,
     viewer: ViewerState,
+    /// The receiver's animation state, by drawing: at most
+    /// [`MAX_ANIMATED_DRAWINGS`](crate::limits::MAX_ANIMATED_DRAWINGS).
+    animation: BTreeMap<u16, AnimationState>,
+    /// The ticks each drawing being painted gradually has been painting
+    /// (DEC-6382). A drawing not here is painted whole.
+    painting: BTreeMap<u16, u64>,
+    /// The drawings whose painting is to start, with the drawings below
+    /// them, when time next passes or a picture is made.
+    starting: BTreeSet<u16>,
+    /// Whether any committed drawing has a paint rate.
+    rated: bool,
 }
 
 impl Scene {
@@ -108,6 +125,10 @@ impl Scene {
             tables_version: 0,
             player,
             viewer: ViewerState::default(),
+            animation: BTreeMap::new(),
+            painting: BTreeMap::new(),
+            starting: BTreeSet::new(),
+            rated: false,
         }
     }
 
@@ -164,7 +185,11 @@ impl Scene {
     /// The batch the operations now belong to, opened by the first of them
     /// after a commit.
     fn batch(&mut self, base: &Machine) -> &mut Batch {
-        self.batch.get_or_insert_with(|| Batch { failure: None, palette: base.palette().clone() })
+        self.batch.get_or_insert_with(|| Batch {
+            failure: None,
+            palette: base.palette().clone(),
+            written: BTreeMap::new(),
+        })
     }
 
     /// Notes the first thing wrong with the batch.
@@ -186,9 +211,18 @@ impl Scene {
             // `D(E)` with no definition open.
             Operation::End => self.fail(base, CommitError::Malformed, 0),
             Operation::Create(drawing) => self.staged.create(drawing),
-            Operation::Set(drawing, attribute) => self.staged.set(drawing, attribute),
-            Operation::Delete(drawing) => self.staged.delete(drawing),
-            Operation::DeleteAll => self.staged = Stage::default(),
+            Operation::Set(drawing, attribute) => {
+                self.staged.set(drawing, attribute);
+                self.note_written(drawing, attribute);
+            }
+            Operation::Delete(drawing) => {
+                self.staged.delete(drawing);
+                self.note_deleted();
+            }
+            Operation::DeleteAll => {
+                self.staged = Stage::default();
+                self.note_deleted();
+            }
             Operation::Malformed(drawing) => self.fail(base, CommitError::Malformed, drawing),
             Operation::Commit => {
                 let event = match self.commit(base) {

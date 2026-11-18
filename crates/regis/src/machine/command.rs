@@ -175,6 +175,7 @@ impl Machine {
             Context::Options(Command::Text) => self.text.tilted = false,
             Context::Options(Command::Drawing) => self.close_drawing_command(),
             Context::DrawingClip => self.close_drawing_clip(),
+            Context::DrawingFrames => self.close_drawing_frames(),
             _ => {}
         }
     }
@@ -200,6 +201,7 @@ impl Machine {
             Context::Options(Command::Drawing) => self.drawing_option(token),
             Context::DrawingSet => self.drawing_attribute(token),
             Context::DrawingClip => self.drawing_clip(token),
+            Context::DrawingFrames => self.drawing_frames(token),
             Context::Designators
             | Context::Skip
             | Context::Options(Command::Fill | Command::Ignored)

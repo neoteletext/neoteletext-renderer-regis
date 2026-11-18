@@ -78,6 +78,8 @@ pub(crate) enum Context {
     DrawingSet,
     /// `D(S n(C(...)))`: a clip rectangle.
     DrawingClip,
+    /// `D(S n(F(...)))`: a frame list.
+    DrawingFrames,
     /// Something not understood: skipped to its closing parenthesis.
     Skip,
 }

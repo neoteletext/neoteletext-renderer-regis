@@ -217,10 +217,15 @@ impl Canvas {
         }
     }
 
-    /// Puts back another page's pixels inside a rectangle and forgets the
-    /// pick record there: the start of repainting that rectangle.
+    /// Puts back another page's pixels and pick record inside a rectangle:
+    /// the start of repainting that rectangle. The other page is the base,
+    /// which has no pick record, or the background raster, whose record
+    /// holds what the drawings of layer 0 wrote (animation.md, ANIM-12).
     pub(crate) fn restore(&mut self, other: &Self, area: Bounds) {
         let Some(area) = area.within(Bounds::page()) else { return };
+        if self.pick.is_empty() && !other.pick.is_empty() {
+            self.pick = vec![0; Self::area()];
+        }
         let width = to_usize(Self::width_i32());
         let columns = to_usize(area.left)..to_usize(area.right).saturating_add(1);
         for row in to_usize(area.top)..=to_usize(area.bottom) {
@@ -229,8 +234,10 @@ impl Canvas {
             if let (Some(to), Some(from)) = (self.pixels.get_mut(span.clone()), other.pixels.get(span.clone())) {
                 to.copy_from_slice(from);
             }
-            if let Some(picks) = self.pick.get_mut(span) {
-                picks.fill(0);
+            match (self.pick.get_mut(span.clone()), other.pick.get(span)) {
+                (Some(to), Some(from)) => to.copy_from_slice(from),
+                (Some(to), None) => to.fill(0),
+                (None, _) => {}
             }
         }
     }
@@ -243,11 +250,12 @@ impl Canvas {
         }
     }
 
-    /// Replaces every pixel with another page's and forgets the pick record.
+    /// Replaces every pixel and the pick record with another page's.
     pub(crate) fn copy_from(&mut self, other: &Self) {
         self.pixels.clear();
         self.pixels.extend_from_slice(&other.pixels);
         self.pick.clear();
+        self.pick.extend_from_slice(&other.pick);
     }
 
     /// The pick record, row by row; empty when no pixel has a drawing.

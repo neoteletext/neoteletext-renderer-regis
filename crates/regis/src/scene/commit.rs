@@ -4,6 +4,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
+use super::animation::AnimationState;
 use super::stage::Stage;
 use super::{Scene, Tables};
 use crate::event::CommitError;
@@ -23,19 +24,21 @@ enum Seen {
 }
 
 /// The drawings that may be painted as part of painting `number`: its
-/// children, and its source, hover look and pressed look where they exist.
+/// children, and its source, its three looks and the entries of its frame
+/// list where they exist (animation.md, ANIM-10).
 fn nested(stage: &Stage, number: u16) -> Vec<u16> {
     let mut nested = stage.children(number);
     if let Some(drawing) = stage.get(number) {
-        let named = [drawing.source, drawing.hover, drawing.pressed];
-        nested.extend(named.into_iter().filter(|other| stage.get(*other).is_some()));
+        let named = [drawing.source, drawing.hover, drawing.pressed, drawing.alternative];
+        let named = named.into_iter().chain(drawing.frames.entries().iter().copied());
+        nested.extend(named.filter(|other| stage.get(*other).is_some()));
     }
     nested
 }
 
 /// Checks that no drawing is reached from itself through parent, source,
-/// hover look and pressed look links, and that none nests deeper than the cap. The walk keeps its own
-/// stack, at most one entry deeper than the cap.
+/// look and frame links, and that none nests deeper than the cap. The
+/// walk keeps its own stack, at most one entry deeper than the cap.
 fn check_nesting(stage: &Stage) -> Result<(), Failure> {
     let mut seen: BTreeMap<u16, Seen> = BTreeMap::new();
     for root in stage.numbers() {
@@ -89,6 +92,7 @@ impl Scene {
     /// `D(C)`: applies the staged operations, or fails and drops them.
     pub(super) fn commit(&mut self, base: &mut Machine) -> Result<(), Failure> {
         let batch = self.batch.take();
+        let before = self.rated();
         let staged_bytes = core::mem::take(&mut self.staged_bytes);
         let result = self.check(batch.as_ref().and_then(|batch| batch.failure), staged_bytes, base);
         match result {
@@ -99,6 +103,8 @@ impl Scene {
                 self.tables = tables;
                 self.committed = self.staged.clone();
                 self.commits = self.commits.wrapping_add(1);
+                let written = batch.map(|batch| batch.written).unwrap_or_default();
+                self.committed_over_animation(&written, &before);
                 Ok(())
             }
             Err(failure) => {
@@ -137,7 +143,7 @@ impl Scene {
             self.player.machine.macrographs.clone_from(&tables.macrographs);
             self.player.machine.characters.sets.clone_from(&tables.sets);
         }
-        self.check_work()?;
+        self.check_work(&BTreeMap::new())?;
         Ok(tables)
     }
 
@@ -149,12 +155,15 @@ impl Scene {
 
     /// Checks that painting every visible drawing costs no more than the
     /// cap, measuring the contents not yet measured.
-    fn check_work(&mut self) -> Result<(), Failure> {
+    /// `shown` is the animation state: a drawing it shows is counted
+    /// though the stream hid it. A commit is checked with none, so that
+    /// it fails exactly when a sender's validator says it will.
+    pub(super) fn check_work(&mut self, shown: &BTreeMap<u16, AnimationState>) -> Result<(), Failure> {
         let mut costs = BTreeMap::new();
         let mut total = 0_u64;
         for number in self.staged.children(0) {
-            if self.staged.get(number).is_some_and(|drawing| drawing.visible) {
-                total = total.saturating_add(self.cost(number, &mut costs, MAX_DRAWING_DEPTH)?);
+            if self.counted(number, shown) {
+                total = total.saturating_add(self.cost(number, &mut costs, MAX_DRAWING_DEPTH, shown)?);
                 if total > MAX_REBUILD_WORK {
                     return Err((CommitError::Work, 0));
                 }
@@ -163,34 +172,51 @@ impl Scene {
         Ok(())
     }
 
+    /// Whether a drawing's painting is counted: it is visible, or the
+    /// animation state shows it.
+    fn counted(&self, number: u16, shown: &BTreeMap<u16, AnimationState>) -> bool {
+        let forced = shown.get(&number).is_some_and(|state| state.shown == Some(true));
+        self.staged.get(number).is_some_and(|drawing| drawing.visible || forced)
+    }
+
     /// The most painting one drawing can cost where it is used, whatever
-    /// the viewer state: itself, the dearest of its ordinary look (its
-    /// contents or its source), its hover look and its pressed look, and
-    /// its visible children. A source or a look counts each time it is
-    /// used. The nesting check has bounded `depth`.
-    fn cost(&mut self, number: u16, costs: &mut BTreeMap<u16, u64>, depth: usize) -> Result<u64, Failure> {
+    /// the viewer state and the animation state's frame and forced look:
+    /// itself, the dearest of its ordinary look (its contents or its
+    /// source), its three looks and every entry of its frame list, and
+    /// its visible children (animation.md, ANIM-9). A source, a look or a
+    /// frame counts each time it is used. The nesting check has bounded
+    /// `depth`.
+    fn cost(
+        &mut self,
+        number: u16,
+        costs: &mut BTreeMap<u16, u64>,
+        depth: usize,
+        shown_by: &BTreeMap<u16, AnimationState>,
+    ) -> Result<u64, Failure> {
         if let Some(cost) = costs.get(&number) {
             return Ok(*cost);
         }
         let Some(depth) = depth.checked_sub(1) else { return Err((CommitError::Depth, number)) };
         let Some(drawing) = self.staged.get(number) else { return Ok(0) };
-        let (source, looks) = (drawing.source, [drawing.hover, drawing.pressed]);
+        let (source, frames) = (drawing.source, drawing.frames);
+        let looks = [drawing.hover, drawing.pressed, drawing.alternative];
         let mut shown = match source {
             0 => self.contents_work(number)?,
             // A source that does not exist draws nothing.
             source if self.staged.get(source).is_none() => 0,
-            source => self.cost(source, costs, depth)?,
+            source => self.cost(source, costs, depth, shown_by)?,
         };
-        for look in looks {
-            // A look that does not exist leaves the ordinary look.
+        for look in looks.into_iter().chain(frames.entries().iter().copied()) {
+            // A look that does not exist leaves the ordinary look, and a
+            // frame that does not exist draws nothing.
             if self.staged.get(look).is_some() {
-                shown = shown.max(self.cost(look, costs, depth)?);
+                shown = shown.max(self.cost(look, costs, depth, shown_by)?);
             }
         }
         let mut cost = DRAWING_VISIT_COST.saturating_add(shown);
         for child in self.staged.children(number) {
-            if self.staged.get(child).is_some_and(|drawing| drawing.visible) {
-                cost = cost.saturating_add(self.cost(child, costs, depth)?);
+            if self.counted(child, shown_by) {
+                cost = cost.saturating_add(self.cost(child, costs, depth, shown_by)?);
             }
         }
         if cost > MAX_REBUILD_WORK {

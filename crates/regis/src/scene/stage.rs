@@ -13,7 +13,8 @@ use alloc::sync::Arc as Shared;
 use alloc::vec::Vec;
 
 use super::Scene;
-use crate::machine::{Attribute, Clip};
+use crate::limits::DEFAULT_LAYER;
+use crate::machine::{Attribute, Clip, Frames};
 use crate::surface::Bounds;
 
 /// A drawing's contents, shared between every state that holds them.
@@ -52,6 +53,17 @@ pub(super) struct Drawing {
     pub(super) pressed: u16,
     pub(super) detectable: bool,
     pub(super) clip: Option<Clip>,
+    /// The layer it is painted in when it is a top-level drawing, 0 to 3
+    /// (animation.md, ANIM-12).
+    pub(super) layer: u8,
+    /// The drawing painted in its place while the alternative look is
+    /// forced, 0 for none (ANIM-10).
+    pub(super) alternative: u16,
+    /// The drawings of which the one the frame in force names is painted
+    /// in its place (ANIM-10).
+    pub(super) frames: Frames,
+    /// The paint rate, 0 for at once (DEC-6382; ANIM-15).
+    pub(super) rate: u16,
 }
 
 impl Default for Drawing {
@@ -69,6 +81,10 @@ impl Default for Drawing {
             pressed: 0,
             detectable: false,
             clip: None,
+            layer: DEFAULT_LAYER,
+            alternative: 0,
+            frames: Frames::default(),
+            rate: 0,
         }
     }
 }
@@ -112,6 +128,12 @@ impl Stage {
         }
     }
 
+    /// A drawing's children (all of them, shown or not), by number; the
+    /// top-level drawings are the children of 0.
+    pub(super) fn child_numbers(&self, parent: u16) -> impl Iterator<Item = u16> + '_ {
+        self.children.range((parent, u16::MIN)..=(parent, u16::MAX)).map(|(_, child)| *child)
+    }
+
     /// A drawing's children (all of them, shown or not), in drawing order:
     /// by depth, and by number among equal depths.
     pub(super) fn children(&self, parent: u16) -> Vec<u16> {
@@ -146,6 +168,10 @@ impl Stage {
             Attribute::Pressed(pressed) => drawing.pressed = pressed,
             Attribute::Detectable(detectable) => drawing.detectable = detectable,
             Attribute::Clip(clip) => drawing.clip = clip,
+            Attribute::Layer(layer) => drawing.layer = layer,
+            Attribute::Alternative(alternative) => drawing.alternative = alternative,
+            Attribute::Frames(frames) => drawing.frames = frames,
+            Attribute::Rate(rate) => drawing.rate = rate,
             Attribute::Parent(parent) => {
                 let old = core::mem::replace(&mut drawing.parent, parent);
                 self.children.remove(&(old, number));

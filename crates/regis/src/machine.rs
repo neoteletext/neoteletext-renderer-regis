@@ -24,5 +24,5 @@ mod text;
 mod write;
 
 pub(crate) use lettering::LOADABLE_SETS;
-pub(crate) use numbered::{Attribute, Clip, Operation};
+pub(crate) use numbered::{Attribute, Clip, Frames, Operation};
 pub(crate) use state::{Machine, Reading, Role};

@@ -55,7 +55,7 @@ pub use error::Error;
 pub use event::{CommitError, Event};
 pub use font::Font;
 pub use palette::{Palette, Rgb};
-pub use scene::{Pick, Picture, ViewerState};
+pub use scene::{AnimationState, ForcedLook, Pick, Picture, Rectangle, ViewerState};
 pub use surface::{Canvas, SCREEN_HEIGHT, SCREEN_WIDTH, Screen};
 pub use terminal::Terminal;
 pub use validator::Validator;

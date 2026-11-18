@@ -13,16 +13,34 @@ pub(crate) struct Work {
     exhausted: bool,
     /// Every unit paid since the start, for a caller that reports it.
     spent: u64,
+    /// Once a spend is refused, every later one is too: what is drawn is
+    /// then exactly what comes before the first thing that could not be
+    /// afforded, which is how a drawing is painted in part (DEC-6382).
+    strict: bool,
+    /// A strict allowance has refused a spend.
+    stopped: bool,
 }
 
 impl Work {
     pub(crate) const fn new() -> Self {
-        Self { left: WORK_CAP, exhausted: false, spent: 0 }
+        Self { left: WORK_CAP, exhausted: false, spent: 0, strict: false, stopped: false }
     }
 
     /// An allowance of exactly `units`, for painting a numbered drawing.
     pub(crate) const fn with(units: u64) -> Self {
-        Self { left: units, exhausted: false, spent: 0 }
+        Self { left: units, exhausted: false, spent: 0, strict: false, stopped: false }
+    }
+
+    /// An allowance of exactly `units` that stops for good at the first
+    /// spend it cannot afford, for painting the first part of a numbered
+    /// drawing.
+    pub(crate) const fn strict(units: u64) -> Self {
+        Self { left: units, exhausted: false, spent: 0, strict: true, stopped: false }
+    }
+
+    /// Whether a strict allowance has refused a spend, and so refuses all.
+    pub(crate) const fn stopped(&self) -> bool {
+        self.stopped
     }
 
     /// The units not yet spent.
@@ -38,12 +56,17 @@ impl Work {
 
     /// Pays for `units` of work; false (and nothing paid) if they cannot be afforded.
     pub(crate) fn spend(&mut self, units: u64) -> bool {
+        if self.stopped {
+            self.exhausted = true;
+            return false;
+        }
         if let Some(left) = self.left.checked_sub(units) {
             self.left = left;
             self.spent = self.spent.saturating_add(units);
             true
         } else {
             self.exhausted = true;
+            self.stopped = self.strict;
             false
         }
     }

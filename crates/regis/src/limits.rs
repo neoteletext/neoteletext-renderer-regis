@@ -92,6 +92,49 @@ pub const DRAWING_BYTE_COST: u64 = 64;
 /// paid for.
 pub const DRAWING_VISIT_COST: u64 = 64;
 
+/// The layers of a picture, drawn in this order: 0 the background, 1 the
+/// scene, 2 the sprites, 3 the overlay (animation.md, ANIM-12). A
+/// top-level numbered drawing names its layer with the attribute `G`.
+pub const LAYERS: u8 = 4;
+/// The layer of a numbered drawing that names none (ANIM-10): the scene.
+pub const DEFAULT_LAYER: u8 = 1;
+/// The numbered drawings that may hold animation state at once
+/// ([`Terminal::set_animation`](crate::Terminal::set_animation); ANIM-9,
+/// ANIM-16).
+pub const MAX_ANIMATED_DRAWINGS: usize = 64;
+/// The drawings of one page a receiver cycles through their frames at once
+/// (ANIM-14, ANIM-16). The renderer keeps no clock and cycles nothing: the
+/// receiver that sets each drawing's frame holds a page to this.
+pub const MAX_CYCLING_OBJECTS: usize = 16;
+/// The entries of a drawing's frame list, `F(...)`, and so the frames an
+/// animation state can name: 0 to one less than this (ANIM-10, ANIM-14).
+pub const MAX_OBJECT_FRAMES: usize = 16;
+/// The pixels a receiver repaints for animation in one tick: half a
+/// picture of 800 by 480 (ANIM-16). A starting value, to be confirmed by
+/// measurement. The receiver holds a page to it; damage that would pass
+/// it waits for the next tick.
+pub const MAX_ANIMATION_PIXELS_PER_TICK: u32 = 192_000;
+/// The ticks of the presentation clock in a second (ANIM-1); also the
+/// ticks of a v1 time delay (manual chapter 2, "Time Delay").
+pub const TICKS_PER_SECOND: u64 = 60;
+/// The work units a receiver spends repainting for animation in one tick:
+/// a tick's share of [`REPAINT_WORK_PER_SECOND`], taken from that same
+/// budget (ANIM-16).
+pub const ANIMATION_WORK_PER_TICK: u64 = REPAINT_WORK_PER_SECOND / TICKS_PER_SECOND;
+/// The work units a second that one unit of the paint rate attribute,
+/// `T`, paints: `T1` is a pen moving 100 pixels a second (DEC-6382 item
+/// 1; ANIM-15).
+pub const PAINT_RATE_UNIT: u64 = 100;
+/// The largest paint rate: a 16-bit signed value, as every attribute is
+/// (DEC-6382 item 1; ANIM-10).
+pub const MAX_PAINT_RATE: u16 = 32_767;
+
+// Half a picture, as ANIM-16 derives the figure.
+const _: () =
+    assert!(MAX_ANIMATION_PIXELS_PER_TICK == crate::surface::SCREEN_WIDTH * crate::surface::SCREEN_HEIGHT / 2);
+// ANIM-16 states the figure: a sixtieth of the repaint budget.
+const _: () = assert!(ANIMATION_WORK_PER_TICK == 3_333_333);
+
 /// Events one feeding call returns; later ones are dropped.
 pub const MAX_EVENTS: usize = 1024;
 /// Bytes of font text [`crate::Font::parse`] accepts.
