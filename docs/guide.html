@@ -50,6 +50,7 @@ target/release/regis-render picture.regis picture.png</code></pre>
 <table>
 <tr><th>Argument</th><th>Meaning</th></tr>
 <tr><td><code>--font FILE</code></td><td>The shapes of the built-in characters, in place of the VT340 font compiled into the tool.</td></tr>
+<tr><td><code>--teletext ENGINE</code></td><td>NeoTeletext's 55 provided character sets, alphabets 100 to 154, read from the engine's checkout (see Fonts).</td></tr>
 <tr><td><code>--page 0|1</code></td><td>Write this graphics page instead of the one the stream left on show.</td></tr>
 <tr><td><code>--macrograph-reports</code></td><td>Let <code>R(M(letter))</code> report a macrograph's contents (off otherwise).</td></tr>
 <tr><td><code>--frames TICKS</code></td><td>Play the picture's animation for this many ticks of a sixtieth of a second, 1 to 36,000, from tick 0, and write a sequence of images instead of one (see <a href="#animation">animation</a>).</td></tr>
@@ -203,6 +204,9 @@ assert_eq!(picture.canvas().pixel(305, 205), Some(3));</code></pre>
 <tr><td><code>fonts/vwsvt0.regisfont</code></td><td>DEC's VWSVT0 terminal font, narrowed to eight pixels by <code>tools/bdf_to_regisfont.py</code>. Close to the VT340's shapes but not the same.</td></tr>
 <tr><td><code>fonts/loadable/greek.regis</code></td><td>A Greek alphabet as ReGIS load commands for set 1. Send it in the stream, then select it with <code>T(A1)</code>.</td></tr>
 </table>
+<p>NeoTeletext's 55 provided character sets are not files of this repository: they are the engine's Noto Teletext glyphs, passed in by the program that shows the page (<code>Terminal::set_provided_set</code>) and selected with <code>T(A100)</code> to <code>T(A154)</code>; <code>regis-v2.md</code>, "Provided character sets", has the table. <code>regis-render --teletext ENGINE</code> reads them, with the joined forms of the Arabic-script sets, from the engine's checkout:</p>
+<pre><code>regis-render --teletext ~/devel/neoteletext-renderer-teletext greek.regis greek.png</code></pre>
+<p>where <code>greek.regis</code> might hold <code>P[100,100]T(A117)'ABCD'</code>, which draws ΑΒΓΔ. They cannot be loaded with <code>L</code>.</p>
 <p>A font file holds one or two <em>strikes</em>:</p>
 <pre><code># a comment
 [strike 20]

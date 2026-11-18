@@ -17,6 +17,7 @@ The changes, all additive:
 7. A pick record names the drawing under each pixel, so a screen position can be resolved to a drawing.
 8. Since 18 November 2026, animation by the receiver: an animation state it sets on numbered drawings, four layers, frame lists and a paint rate (see Animation).
 9. Since 18 November 2026, a title the picture carries for page lists, `D(T'...')` (see Title).
+10. Since 19 November 2026, NeoTeletext's 55 provided character sets as text alphabets 100 to 154, with the plain Arabic-script sets joined (see Provided character sets).
 
 This document covers the language and the renderer only. How the bytes are carried, how input reaches the application, and how a server keeps and resends a scene are outside its scope: the system that embeds the renderer defines them.
 
@@ -274,6 +275,43 @@ Beside the repaint budget, a receiver holds a page to these (`regis::limits`), s
 
 The renderer enforces the first, second and fourth. The others are the receiver's to keep, since they are about time, which the renderer does not have. All are starting values, to be confirmed by measurement.
 
+## Provided character sets
+
+Added 19 November 2026 (renderer-parity.md PAR-12 and PAR-13; REQ-6764; the owner's DEC-6669 item 4, that only NeoTeletext's provided character sets are used for text, in every renderer, selected by each format's own means). It changes no v1 behaviour: a v1 page selects only alphabets 0 to 3.
+
+- **Selecting one.** The text command's alphabet option, `T(A n)` ([chapter 7](https://vt100.net/docs/vt3xx-gp/chapter7.html), "Select Character Set"), selects alphabet 0 (built in) or 1 to 3 (loadable, [chapter 8](https://vt100.net/docs/vt3xx-gp/chapter8.html)) on the VT340. ReGIS v2 adds alphabets 100 to 154: alphabet `100 + n` is set `n` of NeoTeletext's 55 provided sets, in the engine's `FONT_SETS` order (the order of the NAPLPS renderer's private designations, REQ-6668), listed below. An alphabet from 4 to 99 or past 154 is ignored, as an unknown one always was: the alphabet in force stays.
+- **What a string draws in one.** A string's byte 0x20 to 0x7E draws the set's position `byte − 0x20`. Every other byte a string keeps (0xA0 to 0xFF; DEL and the controls other than the four text controls are left out of a string, chapter 7, "Control Characters in Text Strings") draws the empty character cell and advances. Position 7/15 of a set cannot be reached. The text controls BS, HT, LF and CR act as in any alphabet.
+- **The glyphs are the caller's.** The renderer compiles no font (DEC-6346): the caller passes each set as a `ProvidedSet`, a glyph for each of the 96 positions, each at most `MAX_PROVIDED_GLYPH_WIDTH` (16) by `MAX_PROVIDED_GLYPH_HEIGHT` (32) pixels, with `Terminal::set_provided_set(number, set)` for a number below `PROVIDED_SETS` (55). NeoTeletext's are the engine's Noto Teletext glyphs, 12 by 20. A provided alphabet whose set was not given draws empty cells; so does a position the set leaves blank.
+- **Drawn as a built-in character.** A glyph is scaled into the unit cell by the rule of the built-in strikes: each unit pixel takes the glyph pixel its share of the cell starts in, so a glyph is stretched by repeating pixels and shrunk by leaving some out (the default unit cell of 8 by 20 shows columns 0, 1, 3, 4, 6, 7, 9 and 10 of a 12-pixel glyph). Size, direction, italic, the writing mode and shading by a character apply as to any character.
+- **Not loadable.** The load command `L` refuses a provided alphabet, as it refuses any alphabet past 3 (DEC-6669 item 4: DEC-6295's exception for `L` is not widened). A page brings no letters of its own.
+- **Joined letters.** For a set the caller gives joining data (`ProvidedSet::set_joining` and `set_form`: each position's joining type, none, right-joining, dual-joining or transparent, and its final, initial and medial glyphs), which NeoTeletext gives the plain Arabic-script sets 44 to 51, each letter of a string is drawn in the form its neighbours in that string give it, by the teletext renderer's rule (REQ-CHR-015). A string is in visual order, so the letter that follows a letter in reading is the one before it in the string, on its left. A letter joins leftwards when it is dual-joining and the nearest code on its left that is not a mark is dual- or right-joining; it joins rightwards when it is dual- or right-joining and the nearest code on its right that is not a mark is dual-joining. Joining both ways gives the medial form, leftwards only the initial, rightwards only the final, neither the isolated form, the set's own glyph; a form the caller did not give draws the isolated glyph. A mark takes no part and keeps its own glyph. Joining ends at the string's end and at a text control character; since a string is one alphabet's, it ends at a change of alphabet too.
+- **Numbered drawings.** The provided sets are the caller's, not the stream's, so every numbered drawing draws them as the base does; they are not among the tables of rule 4 of Rules for contents.
+- **Compatibility.** A renderer built before this work ignores `T(A100)`, so it draws the codes in the alphabet that was in force: wrong letters, nothing worse. NeoTeletext's server sends a ReGIS picture only to a receiver that says it draws ReGIS.
+
+| Alphabet | Set | Name | Alphabet | Set | Name | Alphabet | Set | Name |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 100 | 0 | `G0-Latin` | 101 | 1 | `G0-Latin-English` | 102 | 2 | `G0-Latin-German` |
+| 103 | 3 | `G0-Latin-SwedishFinnishHungarian` | 104 | 4 | `G0-Latin-Italian` | 105 | 5 | `G0-Latin-French` |
+| 106 | 6 | `G0-Latin-PortugueseSpanish` | 107 | 7 | `G0-Latin-CzechSlovak` | 108 | 8 | `G0-Latin-Polish` |
+| 109 | 9 | `G0-Latin-Turkish` | 110 | 10 | `G0-Latin-SerbianCroatianSlovenian` | 111 | 11 | `G0-Latin-Rumanian` |
+| 112 | 12 | `G0-Latin-Estonian` | 113 | 13 | `G0-Latin-LettishLithuanian` | 114 | 14 | `G0-Cyrillic-1` |
+| 115 | 15 | `G0-Cyrillic-2` | 116 | 16 | `G0-Cyrillic-3` | 117 | 17 | `G0-Greek` |
+| 118 | 18 | `G0-Arabic` | 119 | 19 | `G0-Hebrew` | 120 | 20 | `G2-Latin` |
+| 121 | 21 | `G2-Cyrillic` | 122 | 22 | `G2-Greek` | 123 | 23 | `G2-Arabic` |
+| 124 | 24 | `G0-Latin-HausaFula` | 125 | 25 | `G0-Latin-WestAfrican` | 126 | 26 | `G0-Latin-Ewe` |
+| 127 | 27 | `G0-Latin-KabyleTamazight` | 128 | 28 | `G0-Latin-Azerbaijani` | 129 | 29 | `G0-Latin-KanuriMossi` |
+| 130 | 30 | `G0-Vietnamese` | 131 | 31 | `G0-Igbo` | 132 | 32 | `G0-Cyrillic-Ukrainian` |
+| 133 | 33 | `G0-Cyrillic-Belarusian` | 134 | 34 | `G0-Cyrillic-Macedonian` | 135 | 35 | `G0-Cyrillic-Serbian` |
+| 136 | 36 | `G0-Cyrillic-KyrgyzMongolian` | 137 | 37 | `G0-Cyrillic-Tatar` | 138 | 38 | `G0-Cyrillic-Tajik` |
+| 139 | 39 | `G0-Georgian` | 140 | 40 | `G0-Armenian` | 141 | 41 | `G0-Tifinagh` |
+| 142 | 42 | `G2-Vietnamese` | 143 | 43 | `G2-Armenian` | 144 | 44 | `G0-Arabic-Persian` (joined) |
+| 145 | 45 | `G0-Arabic-Urdu` (joined) | 146 | 46 | `G0-Arabic-Pashto` (joined) | 147 | 47 | `G0-Arabic-Sindhi` (joined) |
+| 148 | 48 | `G0-Arabic-Sorani` (joined) | 149 | 49 | `G0-Arabic-Uyghur` (joined) | 150 | 50 | `G0-Arabic-Balochi` (joined) |
+| 151 | 51 | `G0-Arabic-Plain` (joined) | 152 | 52 | `G0-Latin-JapaneseRomaji` | 153 | 53 | `G0-Hiragana` |
+| 154 | 54 | `G0-Katakana` |  |  |  |  |  |  |
+
+The constants are in `crates/regis/src/limits.rs`: `FIRST_PROVIDED_ALPHABET` (100), `PROVIDED_SETS` (55), `PROVIDED_SET_POSITIONS` (96), `MAX_PROVIDED_GLYPH_WIDTH` (16) and `MAX_PROVIDED_GLYPH_HEIGHT` (32). Every program that links both this renderer and the engine asserts `PROVIDED_SETS` equal to the engine's `FONT_SET_COUNT`. `regis-render --teletext ENGINE` loads the 55 sets, with the joining data, from the engine's checkout, and `regis-minify` keeps every alphabet selection it finds.
+
 ## Picking
 
 The renderer can say which numbered drawing lies under any screen position. How input reaches the application, and in what messages, is outside the language.
@@ -498,6 +536,12 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
     10. **`Terminal::committed_drawing` and `Terminal::visible_drawing`, with the same two on `Validator`,** were added for the page rule table and the server (neoteletext-common `docs/page-rules.md`, RULE-26; `docs/animation.md`, ANIM-17). The first gives a drawing's shown part, layer and depth order as the stream committed them, apart from the animation state, and `None` when it does not exist. The second names the lowest-numbered top-level drawing that is shown and has a bounding rectangle on the screen; a server refuses a sprite sheet that leaves one. A shown drawing that writes nothing on the screen is not one, and the rectangle is the one measured at the commit, so a drawing whose rectangle touches the screen while its pixels do not is named too. `Validator::base_work` gives the work units spent drawing outside numbered drawings, 0 when the bytes drew nothing on the base picture, which a sheet must not do either.
 
 13. **Labels and titles, added 18 November 2026** (DEC-6638 items 3 and 6; the requirements are recorded in rdm under DEC-6638): the attribute `U` and the operation `D(T'...')`, with `Terminal::label`, `Terminal::labels` and `Terminal::title` and the same three on `Validator`. They give ReGIS v2 what the NAPLPS renderer's objects and pictures were given at the same time, so that a screen reader and a page list can treat the three renderers alike. `regis-minify`'s check compares the labels and title a rewriting commits, as it compares pixels.
+
+14. **Provided character sets, added 19 November 2026** (REQ-6764; renderer-parity.md PAR-12, PAR-13). Where what was built reads the specification one way among several:
+    1. **The scaling rule is the built-in strikes' own**, each unit pixel taking the glyph pixel its share of the cell starts in. PAR-12 names that rule and also describes it as the pixel "nearest the middle" of the share; the two differ when a glyph is shrunk, and the rule the built-in characters use was kept, so that a provided character is drawn exactly as a built-in one is.
+    2. **"Any other byte" is any other byte a string keeps**: the lexer leaves DEL and the controls other than BS, HT, LF and CR out of every string (chapter 7), so only 0xA0 to 0xFF reach a provided alphabet to draw the empty cell.
+    3. **Joining follows string order**, the order in which a string's characters are drawn, as visual order, whatever the string direction.
+    4. **A form the caller did not give draws the isolated glyph**, and the engine's join-causing tatweel is given as dual-joining, which is how it joins; PAR-13 lists four joining types.
 
 The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
 

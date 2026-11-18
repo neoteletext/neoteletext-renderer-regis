@@ -153,7 +153,7 @@ nav { font-size: 0.95rem; color: var(--muted); }
 <table>
 <tr><th>Form</th><th>Effect</th></tr>
 <tr><td><code>T'string'</code></td><td>Draw the string. Each character's cell has its top-left at the cursor, which then moves by the spacing. CR returns to where the text command began (moved down by any LF), LF moves down a display cell, BS back a space, HT forward one.</td></tr>
-<tr><td><code>T(A n)</code></td><td>Character set: 0 built in, 1 to 3 loadable. A character the set lacks is a solid block.</td></tr>
+<tr><td><code>T(A n)</code></td><td>Character set: 0 built in, 1 to 3 loadable, and in ReGIS v2 100 to 154, NeoTeletext's provided sets 0 to 54, whose glyphs the caller passes (<code>Terminal::set_provided_set</code>; <code>regis-v2.md</code>, "Provided character sets"). Any other value is ignored. A character a built-in or loadable set lacks is a solid block; one a provided set lacks, and any byte from 0xA0, is the empty cell. The plain Arabic-script sets, 144 to 151, join their letters within a string.</td></tr>
 <tr><td><code>T(S n)</code></td><td>Standard size 0 to 16 (manual table 7-3): sets display cell, unit cell and spacing. Out of range sets error 9.</td></tr>
 <tr><td><code>T(S[w,h])</code></td><td>Display cell: the area each character takes.</td></tr>
 <tr><td><code>T(U[w,h])</code></td><td>Unit cell: the size of the shape; width a multiple of 8 and height a multiple of 5, rounded down.</td></tr>
