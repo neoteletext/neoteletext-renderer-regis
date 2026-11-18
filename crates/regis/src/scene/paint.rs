@@ -377,16 +377,20 @@ impl Scene {
                 let mut sink = Sink { step: &mut painter, origins: &mut BTreeMap::new(), visits: &mut 0 };
                 walk.visit(&mut sink, *number, Place::screen(), false, MAX_DRAWING_DEPTH);
             }
-            picture.end(self.commits, work, Some(Bounds::page()));
+            picture.end(self.commits, work);
             return;
         }
         let (behind, over) = steps.split_at_checked(background).unwrap_or((&steps, &[]));
+        // Where the base differs from the one the picture was painted over;
+        // the whole page when there was none.
+        let mut base_changed = Some(Bounds::page());
         let (mut behind_damage, mut damage) = match &before {
             Some(before) => {
                 let (old_behind, old_over) =
                     before.steps.split_at_checked(before.background).unwrap_or((&before.steps, &[]));
                 let mut behind_damage = changed(old_behind, behind);
-                behind_damage.add(difference(&before.base, base.pixels()));
+                base_changed = difference(&before.base, base.pixels());
+                behind_damage.add(base_changed);
                 behind_damage.once_per_step(behind);
                 let mut damage = changed(old_over, over);
                 damage.join(&behind_damage);
@@ -418,11 +422,14 @@ impl Scene {
                 break;
             }
         }
-        picture.end(self.commits, work, bounds);
+        picture.end(self.commits, work);
         picture.background = raster;
         let mut kept = before.map(|before| before.base).unwrap_or_default();
-        kept.clear();
-        kept.extend_from_slice(base.pixels());
+        // A base that did not change is kept as it is, not copied again.
+        if base_changed.is_some() {
+            kept.clear();
+            kept.extend_from_slice(base.pixels());
+        }
         picture.painted = Some(Painted {
             steps,
             background,

@@ -5,7 +5,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use super::paint::Step;
-use crate::convert::{to_i32, to_usize};
+use crate::convert::to_usize;
 use crate::palette::Palette;
 use crate::surface::{Bounds, Canvas, Screen, Window};
 
@@ -45,9 +45,11 @@ pub struct Pick {
 #[derive(Clone, Debug)]
 pub struct Picture {
     screen: Screen,
-    /// The pixels the rows being repainted held before, to tell what
-    /// changed.
+    /// The pixels the rectangles being repainted held before, each
+    /// rectangle's rows in turn, to tell what changed.
     previous: Vec<u8>,
+    /// The rectangles being repainted.
+    repainted: Vec<Bounds>,
     pub(super) painted: Option<Painted>,
     /// The background raster: the base with the drawings of layer 0 over
     /// it, repainted only when one of those changes, so that a drawing
@@ -75,6 +77,7 @@ impl Picture {
         Self {
             screen: Screen::single(),
             previous: Vec::new(),
+            repainted: Vec::new(),
             painted: None,
             background: None,
             origins: BTreeMap::new(),
@@ -151,12 +154,15 @@ impl Picture {
         &mut self.screen
     }
 
-    /// The pixels of the rows a rectangle spans.
-    fn rows(&self, area: Bounds) -> &[u8] {
+    /// The pixels of each row of a rectangle, top to bottom.
+    fn rows(&self, area: Bounds) -> impl Iterator<Item = &[u8]> + '_ {
         let width = to_usize(Canvas::width_i32());
-        let rows =
-            to_usize(area.top).saturating_mul(width)..to_usize(area.bottom).saturating_add(1).saturating_mul(width);
-        self.canvas().pixels().get(rows).unwrap_or(&[])
+        let columns = to_usize(area.left)..to_usize(area.right).saturating_add(1);
+        let pixels = self.canvas().pixels();
+        (to_usize(area.top)..=to_usize(area.bottom)).map(move |row| {
+            let start = row.saturating_mul(width);
+            pixels.get(start.saturating_add(columns.start)..start.saturating_add(columns.end)).unwrap_or(&[])
+        })
     }
 
     /// Starts a picture: the background's pixels and pick record are put
@@ -172,10 +178,21 @@ impl Picture {
         origins: BTreeMap<u16, (i32, i32)>,
     ) {
         self.origins = origins;
+        // Only what is repainted can change, so only it is kept: a key at
+        // one side of the picture and a meter at the other keep their two
+        // rectangles, not every row between them.
+        self.repainted.clear();
+        if rectangles.is_empty() {
+            self.repainted.extend(bounds.and_then(|bounds| bounds.within(Bounds::page())));
+        } else {
+            self.repainted.extend(rectangles.iter().filter_map(|area| area.within(Bounds::page())));
+        }
         let mut previous = core::mem::take(&mut self.previous);
         previous.clear();
-        if let Some(bounds) = bounds {
-            previous.extend_from_slice(self.rows(bounds));
+        for &area in &self.repainted {
+            for row in self.rows(area) {
+                previous.extend_from_slice(row);
+            }
         }
         self.previous = previous;
         if let Some(canvas) = self.screen.page_mut(0) {
@@ -191,22 +208,24 @@ impl Picture {
     }
 
     /// Finishes a picture: what it cost and which rows changed.
-    pub(super) fn end(&mut self, commits: u32, work: u64, damage: Option<Bounds>) {
+    pub(super) fn end(&mut self, commits: u32, work: u64) {
         self.commits = commits;
         self.work = work;
         if let Some(canvas) = self.screen.page_mut(0) {
             canvas.tidy_pick();
         }
-        let Some(damage) = damage else {
-            self.changed = None;
-            return;
-        };
-        let width = to_usize(Canvas::width_i32()).max(1);
-        let differs = |(old, new): (&[u8], &[u8])| old != new;
-        let rows = || self.previous.chunks(width).zip(self.rows(damage).chunks(width));
-        let first = rows().position(differs);
-        let last = rows().rposition(differs);
-        let row = |index: usize| to_i32(index).saturating_add(damage.top).unsigned_abs();
-        self.changed = first.zip(last).map(|(first, last)| (row(first), row(last)));
+        let mut changed: Option<(u32, u32)> = None;
+        let mut previous = self.previous.as_slice();
+        for &area in &self.repainted {
+            for (row, now) in (area.top..).zip(self.rows(area)) {
+                let (was, rest) = previous.split_at_checked(now.len()).unwrap_or((previous, &[]));
+                previous = rest;
+                if was != now {
+                    let row = row.unsigned_abs();
+                    changed = Some(changed.map_or((row, row), |(first, last)| (first.min(row), last.max(row))));
+                }
+            }
+        }
+        self.changed = changed;
     }
 }
