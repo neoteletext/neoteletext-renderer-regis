@@ -60,6 +60,17 @@ impl Validator {
         self.terminal.commits()
     }
 
+    /// The work units the bytes fed so far have spent drawing outside
+    /// numbered drawings, as [`Terminal::base_work`] counts them: 0 when
+    /// they drew nothing on the base picture. The validator keeps no
+    /// pixels, but what a command would visit is paid for all the same.
+    /// A sender asks after feeding a whole sprite sheet, which must draw
+    /// nothing itself (neoteletext-common `docs/animation.md`, ANIM-17).
+    #[must_use]
+    pub const fn base_work(&self) -> u64 {
+        self.terminal.base_work()
+    }
+
     /// What the stream committed for a numbered drawing, as
     /// [`Terminal::committed_drawing`] gives it.
     #[must_use]

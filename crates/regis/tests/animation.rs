@@ -691,6 +691,31 @@ fn a_validator_names_the_drawing_a_sheet_leaves_visible() {
     assert_eq!(validator.visible_drawing(), Some(42));
 }
 
+/// ANIM-17: a sheet draws nothing itself, on the base picture either.
+#[test]
+fn a_validator_says_what_a_sheet_drew_outside_numbered_drawings() {
+    let base_work = |sheet: &str| {
+        let mut validator = Validator::new();
+        let events = validator.feed_regis(sheet.as_bytes());
+        assert_eq!(failure(&events), None, "{sheet}");
+        let _ = validator.finish();
+        validator.base_work()
+    };
+    // Definitions, attributes and a commit draw nothing on the base,
+    // however much the masters hold.
+    let masters = format!("D(B41){}D(E)D(B42)P[0,0]V[799,479]T'text'D(E)D(S41(V0),S42(V0),C)", square(2));
+    assert_eq!(base_work(&masters), 0);
+    // Nor do commands that draw nothing: a position, a colour, a
+    // macrograph's definition.
+    assert_eq!(base_work(&format!("P[100,100]W(I3)@:AV[5,5]@;{masters}")), 0);
+    // A vector, a fill, a character and an erase of the screen are each
+    // drawing on the base, before the sheet's drawings or after.
+    for drawn in ["P[0,0]V[10,0]", "F(V[0,0][9,0][9,9])", "T'a'", "S(E)", "P[5,5]V[]"] {
+        assert!(base_work(&format!("{drawn}{masters}")) > 0, "{drawn} before");
+        assert!(base_work(&format!("{masters}{drawn}")) > 0, "{drawn} after");
+    }
+}
+
 /// The terminal's own answer follows the state in force: the animation
 /// state can show a hidden drawing and hide a shown one.
 #[test]
