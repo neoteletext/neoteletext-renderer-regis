@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 
 use crate::event::Event;
 use crate::font::Font;
+use crate::scene::CommittedDrawing;
 use crate::surface::Screen;
 use crate::terminal::Terminal;
 
@@ -57,5 +58,25 @@ impl Validator {
     #[must_use]
     pub fn commits(&self) -> u32 {
         self.terminal.commits()
+    }
+
+    /// What the stream committed for a numbered drawing, as
+    /// [`Terminal::committed_drawing`] gives it.
+    #[must_use]
+    pub fn committed_drawing(&self, number: u16) -> Option<CommittedDrawing> {
+        self.terminal.committed_drawing(number)
+    }
+
+    /// The lowest-numbered top-level drawing the bytes fed so far leave
+    /// able to write on a receiver's screen, as
+    /// [`Terminal::visible_drawing`] gives it; `None` when there is none.
+    /// A sender asks after feeding a whole sprite sheet, and refuses the
+    /// sheet when a drawing is named: a sheet defines hidden masters and
+    /// draws nothing itself (neoteletext-common `docs/animation.md`,
+    /// ANIM-17). Only committed drawings count: operations with no commit
+    /// after them have changed nothing.
+    #[must_use]
+    pub fn visible_drawing(&self) -> Option<u16> {
+        self.terminal.visible_drawing()
     }
 }

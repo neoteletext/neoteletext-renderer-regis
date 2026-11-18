@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use crate::event::Event;
 use crate::font::Font;
 use crate::palette::Palette;
-use crate::scene::{AnimationState, Picture, Rectangle, Scene, ViewerState};
+use crate::scene::{AnimationState, CommittedDrawing, Picture, Rectangle, Scene, ViewerState};
 use crate::surface::Screen;
 pub(crate) use source::Interpreter;
 use stream::{Step, Stream};
@@ -152,6 +152,33 @@ impl Terminal {
     #[must_use]
     pub fn animation(&self, number: u16) -> Option<AnimationState> {
         self.scene.animation(number)
+    }
+
+    /// What the stream committed for a numbered drawing: its attributes
+    /// `V` (shown), `G` (layer) and `L` (depth order), whatever animation
+    /// state it holds. `None` when the drawing does not exist, so that it
+    /// also answers whether one does. With [`Terminal::animation`] it
+    /// gives a rule table a target's shown part, layer and order
+    /// (neoteletext-common `docs/page-rules.md`, RULE-26): each is the
+    /// animation state's where that sets it, else the one here. Operations
+    /// still waiting for their commit are not counted.
+    #[must_use]
+    pub fn committed_drawing(&self, number: u16) -> Option<CommittedDrawing> {
+        self.scene.committed_drawing(number)
+    }
+
+    /// The lowest-numbered top-level drawing that can write on the
+    /// screen as the state stands: it is shown, and its contents, or
+    /// those of a shown drawing below it or of the look or frame in
+    /// force, were measured at their commit to reach a pixel of the
+    /// screen inside every clip rectangle ([`Terminal::bounds`] is not
+    /// `None`). `None` when the numbered drawings leave the picture as
+    /// the base alone made it. A sprite sheet must leave none: it
+    /// defines hidden masters and draws nothing itself (neoteletext-common
+    /// `docs/animation.md`, ANIM-17).
+    #[must_use]
+    pub fn visible_drawing(&self) -> Option<u16> {
+        self.scene.visible_drawing()
     }
 
     /// The position in force of a numbered drawing, x then y, in pixels

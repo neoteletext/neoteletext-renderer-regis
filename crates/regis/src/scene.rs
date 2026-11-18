@@ -17,7 +17,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use animation::Written;
-pub use animation::{AnimationState, ForcedLook, Rectangle};
+pub use animation::{AnimationState, CommittedDrawing, ForcedLook, Rectangle};
 use capture::{Capture, Captured};
 pub use picture::{Pick, Picture};
 use stage::Stage;

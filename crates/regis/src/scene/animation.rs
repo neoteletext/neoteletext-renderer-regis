@@ -97,6 +97,28 @@ impl AnimationState {
     }
 }
 
+/// What the stream committed for a numbered drawing, whatever animation
+/// state the receiver holds for it: what [`Terminal::committed_drawing`]
+/// gives. A rule table reads a target's shown part, layer and order
+/// (neoteletext-common `docs/page-rules.md`, RULE-26); where the animation
+/// state ([`Terminal::animation`]) sets one of them, that is the value in
+/// force, and where it does not, the value here is.
+///
+/// [`Terminal::committed_drawing`]: crate::Terminal::committed_drawing
+/// [`Terminal::animation`]: crate::Terminal::animation
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommittedDrawing {
+    /// The attribute `V`: shown, or hidden with its children.
+    pub shown: bool,
+    /// The attribute `G`, 0 to 3: the layer it is painted in when it is a
+    /// top-level drawing. A child is painted in its top-level ancestor's
+    /// layer, whatever its own `G` (ANIM-10).
+    pub layer: u8,
+    /// The attribute `L`: its depth, which orders it within its layer, or
+    /// within its parent.
+    pub order: i32,
+}
+
 /// A rectangle of a picture's pixels: what [`Terminal::bounds`] gives
 /// (ANIM-13). It lies inside the picture of 800 by 480.
 ///
@@ -264,6 +286,20 @@ impl Scene {
         let narrow = |value: i32| i16::try_from(value.clamp(i32::from(i16::MIN), i32::from(i16::MAX))).unwrap_or(0);
         let own = (narrow(drawing.x), narrow(drawing.y));
         Some(self.animation.get(&number).and_then(|state| state.position).unwrap_or(own))
+    }
+
+    /// What the stream committed for a drawing: its attributes `V`, `G`
+    /// and `L`, the animation state apart.
+    pub(crate) fn committed_drawing(&self, number: u16) -> Option<CommittedDrawing> {
+        let drawing = self.committed.get(number)?;
+        Some(CommittedDrawing { shown: drawing.visible, layer: drawing.layer, order: drawing.depth })
+    }
+
+    /// The first top-level drawing, by number, that can write on the
+    /// screen as the state stands: it has a bounding rectangle.
+    pub(crate) fn visible_drawing(&self) -> Option<u16> {
+        let walk = self.walk();
+        self.committed.child_numbers(0).find(|number| walk.bounds(*number).is_some())
     }
 
     /// A drawing's bounding rectangle on the screen (ANIM-13).

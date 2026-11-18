@@ -8,7 +8,7 @@ mod common;
 use std::fmt::Write as _;
 
 use regis::limits::{MAX_ANIMATED_DRAWINGS, MAX_REBUILD_WORK};
-use regis::{AnimationState, Event, ForcedLook, Picture, Rectangle, Screen, Terminal};
+use regis::{AnimationState, CommittedDrawing, Event, ForcedLook, Picture, Rectangle, Screen, Terminal, Validator};
 
 /// A terminal fed `input` as ReGIS commands, its screen and the events.
 fn fed(input: &str) -> (Terminal, Screen, Vec<Event>) {
@@ -617,6 +617,90 @@ fn a_drawings_rectangle_follows_its_state_and_is_none_while_it_is_not_shown() {
     assert_eq!(terminal.bounds(1), Some(Rectangle { x: 10, y: 10, width: 100, height: 1 }));
     let _ = terminal.feed_regis(&mut screen, b"D(S1(C(X5,Y0,W10,H10)),C)");
     assert_eq!(terminal.bounds(1), Some(Rectangle { x: 15, y: 10, width: 10, height: 1 }));
+}
+
+// ---- RULE-26 and ANIM-17: what the stream committed ----
+
+/// RULE-26 (page-rules.md): a target's shown part, layer and order are
+/// the animation state's where it sets them, else what the stream
+/// committed, which the renderer says apart from the animation state.
+#[test]
+fn the_committed_shown_layer_and_order_are_given_apart_from_the_animation_state() {
+    let stream = format!("D(B1){}D(E)D(S1(V0,G3,L-5),S2(P1),S3(L7))", square(3));
+    let (mut terminal, mut screen, _) = fed(&stream);
+    // Operations waiting for their commit have changed nothing.
+    assert_eq!(terminal.committed_drawing(1), None);
+    let _ = terminal.feed_regis(&mut screen, b"D(C)");
+    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: false, layer: 3, order: -5 }));
+    // The defaults: shown, layer 1, depth 0 (ANIM-10).
+    assert_eq!(terminal.committed_drawing(2), Some(CommittedDrawing { shown: true, layer: 1, order: 0 }));
+    assert_eq!(terminal.committed_drawing(3), Some(CommittedDrawing { shown: true, layer: 1, order: 7 }));
+    assert_eq!((terminal.committed_drawing(4), terminal.committed_drawing(0)), (None, None));
+    // The animation state stands in for the attributes without changing
+    // what was committed.
+    let state = AnimationState { shown: Some(true), layer: Some(0), order: Some(9), ..NONE };
+    assert!(terminal.set_animation(1, state));
+    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: false, layer: 3, order: -5 }));
+    assert_eq!(terminal.animation(1), Some(state));
+    // A later commit is the last writer; a deletion ends the drawing.
+    let _ = terminal.feed_regis(&mut screen, b"D(S1(V1,G2,L4),C)");
+    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: true, layer: 2, order: 4 }));
+    let _ = terminal.feed_regis(&mut screen, b"D(K1,C)");
+    assert_eq!((terminal.committed_drawing(1), terminal.committed_drawing(2)), (None, None));
+    // A failed commit leaves what was committed.
+    let _ = terminal.feed_regis(&mut screen, b"D(S3(V0,P99),C)");
+    assert_eq!(terminal.committed_drawing(3), Some(CommittedDrawing { shown: true, layer: 1, order: 7 }));
+}
+
+/// ANIM-17: "A sheet draws nothing itself: a ReGIS sheet's drawings that
+/// are left visible ... are a fault the server refuses". The validator
+/// names the drawing a sheet leaves able to write on the screen.
+#[test]
+fn a_validator_names_the_drawing_a_sheet_leaves_visible() {
+    let visible = |sheet: &str| {
+        let mut validator = Validator::new();
+        let events = validator.feed_regis(sheet.as_bytes());
+        assert_eq!(failure(&events), None, "{sheet}");
+        validator.visible_drawing()
+    };
+    let masters = format!("D(B41){}D(E)D(B42){}D(E)", square(2), square(3));
+    // A sheet as it should be: hidden masters, then a commit.
+    assert_eq!(visible(&format!("{masters}D(S41(V0),S42(V0),C)")), None);
+    // One master left shown; the lowest number is named.
+    assert_eq!(visible(&format!("{masters}D(S41(V0),C)")), Some(42));
+    assert_eq!(visible(&format!("{masters}D(C)")), Some(41));
+    // A shown drawing that writes nothing is not a fault: an empty
+    // drawing, the shown parent of hidden masters, and one whose contents
+    // lie off the screen or outside its clip rectangle.
+    assert_eq!(visible(&format!("{masters}D(S41(V0),S42(V0),S5(X10),C)")), None);
+    assert_eq!(visible(&format!("{masters}D(S5(X10),S41(V0,P5),S42(V0,P5),C)")), None);
+    assert_eq!(visible(&format!("{masters}D(S41(X800),S42(Y-20),C)")), None);
+    assert_eq!(visible(&format!("{masters}D(S41(C(X20,Y0,W5,H5)),S42(V0),C)")), None);
+    // A shown drawing that draws through a hidden master does draw: as
+    // its source, and as the frame in force.
+    assert_eq!(visible(&format!("{masters}D(S41(V0),S42(V0),S7(R41),C)")), Some(7));
+    assert_eq!(visible(&format!("{masters}D(S41(V0),S42(V0),S8(F(42,41)),C)")), Some(8));
+    // A shown child of a shown parent: the top-level drawing is named.
+    assert_eq!(visible(&format!("{masters}D(S6(X5),S41(V0),S42(P6),C)")), Some(6));
+    // Nothing committed: nothing is left visible, whatever waits.
+    let mut validator = Validator::new();
+    let _ = validator.feed_regis(masters.as_bytes());
+    assert_eq!((validator.visible_drawing(), validator.committed_drawing(41)), (None, None));
+    let _ = validator.feed_regis(b"D(S41(V0,G2),C)");
+    assert_eq!(validator.committed_drawing(41), Some(CommittedDrawing { shown: false, layer: 2, order: 0 }));
+    assert_eq!(validator.visible_drawing(), Some(42));
+}
+
+/// The terminal's own answer follows the state in force: the animation
+/// state can show a hidden drawing and hide a shown one.
+#[test]
+fn the_visible_drawing_follows_the_animation_state() {
+    let (mut terminal, _, _) = fed(&format!("D(B1){}D(E)D(S1(V0),C)", square(3)));
+    assert_eq!(terminal.visible_drawing(), None);
+    assert!(terminal.set_animation(1, AnimationState { shown: Some(true), ..NONE }));
+    assert_eq!(terminal.visible_drawing(), Some(1));
+    assert!(terminal.set_animation(1, AnimationState { shown: Some(true), position: Some((800, 0)), ..NONE }));
+    assert_eq!(terminal.visible_drawing(), None, "off the screen");
 }
 
 /// ANIM-13's test: every pixel a drawing writes lies inside its rectangle.
