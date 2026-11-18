@@ -136,6 +136,10 @@ pub struct Canvas {
     /// reports there, 0 for none. Empty until a detectable drawing is
     /// painted.
     pick: Vec<u16>,
+    /// Where the pick record last named a drawing: looked at first when
+    /// the record is tidied, so that a picture repainted in part is not
+    /// searched whole for the one entry that keeps its record.
+    pick_named: usize,
     /// Whether a pixel was written since this was last asked.
     changed: bool,
     /// Every position drawing reaches is being noted in `reach`.
@@ -167,6 +171,7 @@ impl Canvas {
             pixels: vec![0; Self::area()],
             window: Window::page(),
             pick: Vec::new(),
+            pick_named: 0,
             changed: false,
             measuring: false,
             reach: None,
@@ -180,6 +185,7 @@ impl Canvas {
             pixels: Vec::new(),
             window: Window::page(),
             pick: Vec::new(),
+            pick_named: 0,
             changed: false,
             measuring: false,
             reach: None,
@@ -245,8 +251,12 @@ impl Canvas {
     /// Forgets a pick record that names no drawing, so that it is empty
     /// exactly when no detectable drawing has a pixel.
     pub(crate) fn tidy_pick(&mut self) {
-        if self.pick.iter().all(|drawing| *drawing == 0) {
-            self.pick.clear();
+        if self.pick.get(self.pick_named).is_some_and(|drawing| *drawing != 0) {
+            return;
+        }
+        match self.pick.iter().position(|drawing| *drawing != 0) {
+            Some(named) => self.pick_named = named,
+            None => self.pick.clear(),
         }
     }
 
