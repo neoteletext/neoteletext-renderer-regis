@@ -1,12 +1,14 @@
 //! The command line.
 
 /// How to call the program.
-pub(crate) const USAGE: &str = "usage: regis-render [--font FILE] [--page 0|1] [--macrograph-reports] [--frames TICKS [--frame-step K] [--script FILE|-]] INPUT OUTPUT.png|OUTPUT.ppm";
+pub(crate) const USAGE: &str = "usage: regis-render [--font FILE] [--teletext ENGINE] [--page 0|1] [--macrograph-reports] [--frames TICKS [--frame-step K] [--script FILE|-]] INPUT OUTPUT.png|OUTPUT.ppm";
 
 /// What the command line asked for.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Arguments {
     pub(crate) font: Option<String>,
+    /// The engine's checkout, to load the 55 provided sets from.
+    pub(crate) teletext: Option<String>,
     /// The page to write; the displayed one if not given.
     pub(crate) page: Option<usize>,
     pub(crate) macrograph_reports: bool,
@@ -28,6 +30,9 @@ impl Arguments {
         while let Some(word) = words.next() {
             match word.as_str() {
                 "--font" => arguments.font = Some(words.next().ok_or("--font needs a file")?),
+                "--teletext" => {
+                    arguments.teletext = Some(words.next().ok_or("--teletext needs the engine's checkout")?);
+                }
                 "--page" => {
                     let number = words.next().ok_or("--page needs a number")?;
                     arguments.page = Some(number.parse().map_err(|_| format!("--page: {number} is not a number"))?);
@@ -70,8 +75,9 @@ mod tests {
 
     #[test]
     fn options_and_two_files_are_read() {
-        let arguments = parse(&["--font", "f", "--page", "1", "in", "out.png"]).unwrap();
+        let arguments = parse(&["--font", "f", "--teletext", "engine", "--page", "1", "in", "out.png"]).unwrap();
         assert_eq!(arguments.font.as_deref(), Some("f"));
+        assert_eq!(arguments.teletext.as_deref(), Some("engine"));
         assert_eq!(arguments.page, Some(1));
         assert_eq!((arguments.input.as_str(), arguments.output.as_str()), ("in", "out.png"));
     }
@@ -100,5 +106,6 @@ mod tests {
         assert!(parse(&["--bogus", "in", "out"]).is_err());
         assert!(parse(&["--page", "x", "in", "out"]).is_err());
         assert!(parse(&["--font"]).is_err());
+        assert!(parse(&["--teletext"]).is_err());
     }
 }

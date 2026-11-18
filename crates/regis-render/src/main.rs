@@ -1,7 +1,7 @@
 //! `regis-render`: a ReGIS file in, a picture out.
 //!
 //! ```text
-//! regis-render [--font FILE] [--page N] [--macrograph-reports] INPUT OUTPUT.png|OUTPUT.ppm
+//! regis-render [--font FILE] [--teletext ENGINE] [--page N] [--macrograph-reports] INPUT OUTPUT.png|OUTPUT.ppm
 //! regis-render --frames TICKS [--frame-step K] [--script FILE|-] INPUT OUTPUT.png|OUTPUT.ppm
 //! ```
 //!
@@ -11,6 +11,12 @@
 //! extension (neoteletext-common `docs/animation.md`, ANIM-18). The
 //! script is a text file of timed operations on numbered drawings, one a
 //! line: `<tick> <operation> <drawing> ...`.
+//!
+//! `--teletext ENGINE` loads NeoTeletext's 55 provided character sets from
+//! the engine's checkout, its code list, its Noto Teletext BDF files and
+//! its joining data ([`teletext_sets`]), so that a page selecting
+//! alphabets 100 to 154 draws their characters (`docs/regis-v2.md`,
+//! "Provided character sets"; renderer-parity.md PAR-12, PAR-13).
 //!
 //! The input is a terminal data stream holding device control strings
 //! (`ESC P p … ESC \`), or bare ReGIS commands. Replies the stream asks for
@@ -33,6 +39,7 @@ mod picture;
 mod play;
 mod png;
 mod ppm;
+mod teletext_sets;
 
 use std::fs;
 use std::io::Read;
@@ -89,6 +96,11 @@ fn run(arguments: &Arguments) -> Result<(), String> {
         None => Font::parse(VT340_FONT).map_err(|error| format!("built-in font: {error}"))?,
     };
     terminal.set_font(font);
+    if let Some(engine) = &arguments.teletext {
+        for (number, set) in (0..).zip(teletext_sets::load(Path::new(engine))?) {
+            terminal.set_provided_set(number, set).map_err(|error| format!("provided set {number}: {error}"))?;
+        }
+    }
     terminal.allow_macrograph_reports(arguments.macrograph_reports);
 
     let input = read_bounded(&arguments.input)?;

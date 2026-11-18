@@ -89,6 +89,10 @@ full_steps() {
     cargo test --quiet -p regis --test damage --release --locked -- --ignored
     step "the fuzz target regis_animation on inputs made by property testing, at length"
     cargo test --quiet -p regis-fuzz --test regis_animation --release --locked -- --ignored
+    step "the provided sets drawn from the engine's checkout (regis-render --teletext, REQ-6764)"
+    local engine="${NEOTELETEXT_ENGINE:-$HOME/devel/neoteletext-renderer-teletext}"
+    [[ -f "$engine/crates/neoteletext-core/src/glyphs/required.txt" ]] || fail "the engine's checkout is not at $engine; clone neoteletext-renderer-teletext there or name it in NEOTELETEXT_ENGINE"
+    NEOTELETEXT_ENGINE="$engine" cargo test --quiet -p regis-render --test teletext --release --locked -- --ignored
     step "the fonts are what their sources make"
     need_tool python3 "the font tools are Python (sudo apt-get install python3)"
     [[ -f "$VT340_ROM" ]] || fail "the VT340 ROM is not at $VT340_ROM; put vt340e49.bin there (SHA-256 eb0426b4...) or name it in VT340_ROM"
