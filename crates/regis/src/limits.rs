@@ -57,6 +57,19 @@ pub const WORK_CAP: u64 = 16_000_000;
 /// is painted whole each time. At about 64 bytes a step, kept twice while
 /// two lists are compared, this is 2 MB.
 pub const MAX_DAMAGE_STEPS: usize = 16_384;
+/// The most rectangles a picture's repaint is kept as: each is put back
+/// and repainted on its own, so changes far apart do not repaint what lies
+/// between them; past this the two whose joining adds least are joined.
+/// Eight holds a key and a meter and a few names changed in one frame
+/// (the music player's page, page-rules.md RULE-92) with room to spare,
+/// and bounds the steps replayed for more than one rectangle.
+pub const MAX_DAMAGE_RECTANGLES: usize = 8;
+/// How many steps ahead the repaint looks for a step that was added to or
+/// taken from the list since the last picture, to match the rest; past
+/// it, the two steps are both taken as changed. It bounds the comparison
+/// at this many times [`MAX_DAMAGE_STEPS`], and a scene that shows or
+/// hides a drawing of up to this many steps is matched exactly.
+pub const DAMAGE_LOOKAHEAD_STEPS: usize = 64;
 
 /// The work units of repainting numbered drawings a receiver may spend on
 /// one picture each second ([`RepaintBudget`](crate::RepaintBudget)):

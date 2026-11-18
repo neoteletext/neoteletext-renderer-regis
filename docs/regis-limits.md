@@ -49,6 +49,7 @@ Constants in `crates/regis/src/limits.rs`.
 | Work of one repaint | 100,000,000 units |
 | Cost per drawing painted, and per byte replayed | 64 units each |
 | Steps kept for partial repaint | 16,384 (more means a whole repaint every time) |
+| Rectangles of one partial repaint | 8 (more are joined); a step added or taken away is matched 64 steps ahead |
 | Repaint budget | 200,000,000 units a second, 200,000,000 held |
 
 ## ReGIS v2 animation

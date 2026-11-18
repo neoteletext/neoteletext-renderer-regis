@@ -136,6 +136,10 @@ pub struct Canvas {
     /// reports there, 0 for none. Empty until a detectable drawing is
     /// painted.
     pick: Vec<u16>,
+    /// Where the pick record last named a drawing: looked at first when
+    /// the record is tidied, so that a picture repainted in part is not
+    /// searched whole for the one entry that keeps its record.
+    pick_named: usize,
     /// Whether a pixel was written since this was last asked.
     changed: bool,
     /// Every position drawing reaches is being noted in `reach`.
@@ -167,6 +171,7 @@ impl Canvas {
             pixels: vec![0; Self::area()],
             window: Window::page(),
             pick: Vec::new(),
+            pick_named: 0,
             changed: false,
             measuring: false,
             reach: None,
@@ -180,6 +185,7 @@ impl Canvas {
             pixels: Vec::new(),
             window: Window::page(),
             pick: Vec::new(),
+            pick_named: 0,
             changed: false,
             measuring: false,
             reach: None,
@@ -245,8 +251,12 @@ impl Canvas {
     /// Forgets a pick record that names no drawing, so that it is empty
     /// exactly when no detectable drawing has a pixel.
     pub(crate) fn tidy_pick(&mut self) {
-        if self.pick.iter().all(|drawing| *drawing == 0) {
-            self.pick.clear();
+        if self.pick.get(self.pick_named).is_some_and(|drawing| *drawing != 0) {
+            return;
+        }
+        match self.pick.iter().position(|drawing| *drawing != 0) {
+            Some(named) => self.pick_named = named,
+            None => self.pick.clear(),
         }
     }
 
@@ -340,6 +350,51 @@ impl Canvas {
                 if let Some(target) = self.pick.get_mut(index) {
                     *target = window.pick;
                 }
+            }
+        }
+    }
+
+    /// Changes the pixels of one row from `from` to `to`, both included,
+    /// through `change`, as [`update`](Self::update) would one by one: the
+    /// window is applied to the run once, not to each pixel, which is what
+    /// makes a filled area cost its pixels and no more.
+    pub(crate) fn update_run(&mut self, from: i32, to: i32, y: i32, change: impl Fn(u8) -> Option<u8>) {
+        if from > to {
+            return;
+        }
+        self.reach(from, y);
+        self.reach(to, y);
+        let window = self.window;
+        let y = y.saturating_add(window.dy);
+        if y < window.top.max(0) || y > window.bottom.min(Self::height_i32().saturating_sub(1)) {
+            return;
+        }
+        let left = from.saturating_add(window.dx).max(window.left).max(0);
+        let right = to.saturating_add(window.dx).min(window.right).min(Self::width_i32().saturating_sub(1));
+        let (Some(start), Some(end)) = (Self::index(left, y), Self::index(right, y)) else { return };
+        if start > end {
+            return;
+        }
+        let Some(pixels) = self.pixels.get_mut(start..=end) else { return };
+        let mut written = false;
+        for pixel in pixels {
+            if let Some(value) = change(*pixel) {
+                *pixel = value & PLANE_MASK;
+                written = true;
+            }
+        }
+        if !written {
+            return;
+        }
+        self.changed = true;
+        if window.pick != 0 {
+            // The record is made when the first detectable drawing writes
+            // a pixel (`docs/regis-v2.md`, "Picking").
+            if self.pick.is_empty() {
+                self.pick = vec![0; Self::area()];
+            }
+            if let Some(targets) = self.pick.get_mut(start..=end) {
+                targets.fill(window.pick);
             }
         }
     }

@@ -117,10 +117,20 @@ impl<'a> Painter<'a> {
         self.canvas.update(x, y, |old| ink.apply(old, on));
     }
 
-    /// Writes one pixel of a filled polygon; the caller has paid for it.
-    pub(crate) fn fill_pixel(&mut self, x: i32, y: i32) {
-        let tile = self.controls.shade.and_then(|shade| shade.tile);
-        self.area(x, y, tile);
+    /// Writes a run of one row of a filled polygon, `from` to `to` both
+    /// included; the caller has paid for it. Without a shading character
+    /// the pattern bit is the row's (manual chapter 3, figure 3-21), the
+    /// same for the whole run, so the run is written as one.
+    pub(crate) fn fill_run(&mut self, from: i32, to: i32, y: i32) {
+        if let Some(tile) = self.controls.shade.and_then(|shade| shade.tile) {
+            for x in from..=to {
+                self.area(x, y, Some(tile));
+            }
+            return;
+        }
+        let on = self.controls.pattern_bit(to_u32(y));
+        let ink = self.ink;
+        self.canvas.update_run(from, to, y, |old| ink.apply(old, on));
     }
 
     /// Writes one pixel of a character cell; the caller has paid for it.

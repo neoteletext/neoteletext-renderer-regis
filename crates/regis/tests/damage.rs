@@ -5,6 +5,8 @@
 
 mod common;
 
+use core::fmt::Write as _;
+
 use regis::{AnimationState, ForcedLook, Picture, Screen, Terminal, ViewerState};
 
 /// A linear congruential generator, so the tests need no library and
@@ -239,4 +241,35 @@ fn a_change_to_the_base_is_repainted_under_the_drawings() {
     assert_eq!((pixel(&picture, 95, 50), pixel(&picture, 110, 50), pixel(&picture, 150, 50)), (9, 3, 9));
     assert_eq!(pixel(&picture, 305, 400), 9);
     assert_eq!(picture.changed_rows(), Some((50, 400)));
+}
+
+/// Two changes far apart in one repaint, as a key pressed at one side of
+/// the music player's picture and a meter lit at the other
+/// (page-rules.md RULE-65, RULE-92), repaint those two places and replay
+/// nothing of the drawings between them.
+#[test]
+fn two_changes_far_apart_repaint_two_places_and_nothing_between() {
+    let mut terminal = Terminal::new();
+    let mut screen = Screen::new();
+    // Ten filled squares 40 pixels wide, 70 apart.
+    let mut bytes = String::new();
+    for number in 1..=10 {
+        let x = 20 + 70 * (number - 1);
+        let commit = if number == 10 { ",C" } else { "" };
+        write!(bytes, "D(B{number})W(I3)F(P[0,0]V[0,0][39,0][39,39][0,39])D(E)D(S{number}(X{x},Y100){commit})")
+            .unwrap();
+    }
+    let _ = terminal.feed_regis(&mut screen, bytes.as_bytes());
+    let mut picture = Picture::new();
+    terminal.compose(&screen, &mut picture);
+    let whole = picture.work();
+    // The first and the last move down a pixel.
+    let _ = terminal.feed_regis(&mut screen, b"D(S1(X20,Y101))D(S10(X650,Y101),C)");
+    terminal.compose(&screen, &mut picture);
+    let moved = picture.work();
+    assert!(moved * 4 < whole, "two squares' places, not the eight between: {moved} against {whole}");
+    let mut fresh = Picture::new();
+    terminal.compose(&screen, &mut fresh);
+    assert_eq!(picture.canvas(), fresh.canvas());
+    assert_eq!((pixel(&picture, 30, 100), pixel(&picture, 30, 120), pixel(&picture, 660, 120)), (0, 3, 3));
 }
