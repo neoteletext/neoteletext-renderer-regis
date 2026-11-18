@@ -4,10 +4,12 @@
 //! The interpreter only reads the operations here and queues them; the
 //! scene (`crate::scene`) carries them out.
 
+use alloc::string::String;
+
 use super::Machine;
 use super::frames::Context;
 use crate::lexer::Token;
-use crate::limits::{LAYERS, MAX_DRAWING_NUMBER, MAX_OBJECT_FRAMES, MAX_PAINT_RATE};
+use crate::limits::{LAYERS, MAX_DRAWING_NUMBER, MAX_LABEL_BYTES, MAX_OBJECT_FRAMES, MAX_PAINT_RATE, MAX_TITLE_BYTES};
 use crate::number::Number;
 
 /// A clip rectangle, relative to its drawing's origin.
@@ -49,6 +51,55 @@ impl Frames {
     }
 }
 
+/// The longest text a [`Line`] holds: a label or a title, which share one
+/// bound.
+const MAX_LINE_BYTES: usize = MAX_LABEL_BYTES;
+const _: () = assert!(MAX_TITLE_BYTES == MAX_LINE_BYTES);
+
+/// One short line of plain text a picture carries and never draws: a
+/// drawing's label (`U`) or the picture's title (`D(T...)`), DEC-6638 items
+/// 3 and 6. Its bytes are those of a v1 quoted string as the lexer keeps
+/// them (`lexer/scan.rs`, `is_text`: printable ASCII and the right half of
+/// the 8-bit code, 10/0 to 15/15); they are read as ISO/IEC 8859-1, which
+/// the right half of the VT340's DEC Multinational set largely follows.
+/// Empty for none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Line {
+    bytes: [u8; MAX_LINE_BYTES],
+    length: usize,
+}
+
+impl Default for Line {
+    fn default() -> Self {
+        Self { bytes: [0; MAX_LINE_BYTES], length: 0 }
+    }
+}
+
+impl Line {
+    /// The line a quoted string gives: `None` when it is longer than
+    /// [`MAX_LINE_BYTES`] or holds a control character (the lexer keeps
+    /// backspace, tab, line feed and carriage return in a string; a line
+    /// is spoken or shown as it stands and carries no command).
+    fn of(text: &[u8]) -> Option<Self> {
+        let printable = text.iter().all(|byte| matches!(byte, 0x20..=0x7E | 0xA0..=0xFF));
+        let mut line = Self::default();
+        line.bytes.get_mut(..text.len())?.copy_from_slice(text);
+        line.length = text.len();
+        printable.then_some(line)
+    }
+
+    /// The bytes, ISO/IEC 8859-1.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        self.bytes.get(..self.length).unwrap_or(&[])
+    }
+
+    /// The text: each byte is the Unicode character of the same number, as
+    /// ISO/IEC 8859-1 maps them. `None` when the line is empty.
+    pub(crate) fn text(&self) -> Option<String> {
+        (self.length > 0).then(|| self.bytes().iter().map(|byte| char::from(*byte)).collect())
+    }
+}
+
 /// One attribute of a numbered drawing, as `D(S n(...))` sets it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Attribute {
@@ -73,13 +124,16 @@ pub(crate) enum Attribute {
     Frames(Frames),
     /// `T`: the paint rate, 0 for at once (DEC-6382; ANIM-10, ANIM-15).
     Rate(u16),
+    /// `U'...'`: the label a screen reader speaks for it, empty for none;
+    /// never drawn (DEC-6638 item 6).
+    Label(Line),
 }
 
 /// One `D` operation, in the order read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(
     clippy::large_enum_variant,
-    reason = "a frame list is 34 bytes; operations are read and dropped one batch at a time"
+    reason = "a frame list is 34 bytes and a label 72; operations are read and dropped one batch at a time"
 )]
 pub(crate) enum Operation {
     /// `D(B n)`: the contents of drawing `n` follow; `None` when the
@@ -96,6 +150,9 @@ pub(crate) enum Operation {
     DeleteAll,
     /// `D(C)`
     Commit,
+    /// `D(T'...')`: the picture's title, empty for none; never drawn
+    /// (DEC-6638 item 3).
+    Title(Line),
     /// An operation that could not be read; the drawing concerned, or 0.
     Malformed(u16),
 }
@@ -208,6 +265,16 @@ impl Machine {
 
     /// A token directly inside `D(...)`.
     pub(super) fn drawing_option(&mut self, token: &Token) {
+        if let Token::Text(text) = token {
+            // `T'...'`: the picture's title.
+            let letter = self.syntax.option_letter();
+            self.syntax.set_option_letter(0);
+            match Line::of(text) {
+                Some(title) if letter == b'T' => self.operations.push(Operation::Title(title)),
+                _ => self.malformed_drawing(),
+            }
+            return;
+        }
         match *token {
             Token::Letter(letter) => self.drawing_letter(letter),
             Token::Number(number) => self.drawing_operand(number),
@@ -239,7 +306,7 @@ impl Machine {
                 }
             }
             b'E' if alone => self.numbered.alone = Alone::End,
-            b'S' | b'K' if !after_alone => {}
+            b'S' | b'K' | b'T' if !after_alone => {}
             b'Z' if !after_alone => self.operations.push(Operation::DeleteAll),
             b'C' if !after_alone => self.operations.push(Operation::Commit),
             _ => self.malformed_drawing(),
@@ -276,10 +343,23 @@ impl Machine {
 
     /// A token inside `D(S n(...))`.
     pub(super) fn drawing_attribute(&mut self, token: &Token) {
+        if let Token::Text(text) = token {
+            // `U'...'`: the label, `U` for what a screen reader utters, since
+            // `L` is the depth.
+            let letter = self.syntax.option_letter();
+            self.syntax.set_option_letter(0);
+            match Line::of(text) {
+                Some(label) if letter == b'U' => {
+                    self.operations.push(Operation::Set(self.numbered.target, Attribute::Label(label)));
+                }
+                _ => self.malformed_drawing(),
+            }
+            return;
+        }
         match *token {
             Token::Letter(
                 letter @ (b'X' | b'Y' | b'L' | b'V' | b'P' | b'R' | b'H' | b'A' | b'I' | b'C' | b'G' | b'N' | b'F'
-                | b'T'),
+                | b'T' | b'U'),
             ) => {
                 self.syntax.set_option_letter(letter);
             }

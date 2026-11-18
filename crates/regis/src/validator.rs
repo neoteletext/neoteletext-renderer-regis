@@ -1,6 +1,7 @@
 //! Checking ReGIS v2 before it is sent (`docs/regis-v2.md`, "Checking
 //! before sending").
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::event::Event;
@@ -76,6 +77,27 @@ impl Validator {
     #[must_use]
     pub fn committed_drawing(&self, number: u16) -> Option<CommittedDrawing> {
         self.terminal.committed_drawing(number)
+    }
+
+    /// The label of a committed numbered drawing, as [`Terminal::label`]
+    /// gives it (DEC-6638 item 6).
+    #[must_use]
+    pub fn label(&self, number: u16) -> Option<String> {
+        self.terminal.label(number)
+    }
+
+    /// Every committed drawing with a label, as [`Terminal::labels`] gives
+    /// them.
+    #[must_use]
+    pub fn labels(&self) -> Vec<(u16, String)> {
+        self.terminal.labels()
+    }
+
+    /// The picture's committed title, as [`Terminal::title`] gives it
+    /// (DEC-6638 item 3).
+    #[must_use]
+    pub fn title(&self) -> Option<String> {
+        self.terminal.title()
     }
 
     /// The lowest-numbered top-level drawing the bytes fed so far leave

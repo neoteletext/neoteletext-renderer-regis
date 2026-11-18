@@ -5,6 +5,7 @@
 //! ANIM-15).
 
 use alloc::collections::BTreeMap;
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::Scene;
@@ -293,6 +294,23 @@ impl Scene {
     pub(crate) fn committed_drawing(&self, number: u16) -> Option<CommittedDrawing> {
         let drawing = self.committed.get(number)?;
         Some(CommittedDrawing { shown: drawing.visible, layer: drawing.layer, order: drawing.depth })
+    }
+
+    /// The label of a committed drawing (`U`), if it has one (DEC-6638
+    /// item 6).
+    pub(crate) fn label(&self, number: u16) -> Option<String> {
+        self.committed.get(number)?.label.text()
+    }
+
+    /// Every committed drawing that has a label, by number, with its label.
+    pub(crate) fn labels(&self) -> Vec<(u16, String)> {
+        self.committed.drawings().filter_map(|(number, drawing)| Some((number, drawing.label.text()?))).collect()
+    }
+
+    /// The committed title of the picture (`D(T'...')`), if it has one
+    /// (DEC-6638 item 3).
+    pub(crate) fn title(&self) -> Option<String> {
+        self.committed.title.text()
     }
 
     /// The first top-level drawing, by number, that can write on the

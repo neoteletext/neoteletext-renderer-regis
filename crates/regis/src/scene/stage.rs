@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 
 use super::Scene;
 use crate::limits::DEFAULT_LAYER;
-use crate::machine::{Attribute, Clip, Frames};
+use crate::machine::{Attribute, Clip, Frames, Line};
 use crate::surface::Bounds;
 
 /// A drawing's contents, shared between every state that holds them.
@@ -64,6 +64,9 @@ pub(super) struct Drawing {
     pub(super) frames: Frames,
     /// The paint rate, 0 for at once (DEC-6382; ANIM-15).
     pub(super) rate: u16,
+    /// The label a screen reader speaks for it, `U`; never drawn
+    /// (DEC-6638 item 6).
+    pub(super) label: Line,
 }
 
 impl Default for Drawing {
@@ -85,6 +88,7 @@ impl Default for Drawing {
             alternative: 0,
             frames: Frames::default(),
             rate: 0,
+            label: Line::default(),
         }
     }
 }
@@ -98,6 +102,8 @@ pub(super) struct Stage {
     children: BTreeSet<(u16, u16)>,
     /// Bytes of contents held.
     bytes: usize,
+    /// The picture's title, `D(T'...')`; never drawn (DEC-6638 item 3).
+    pub(super) title: Line,
 }
 
 impl Stage {
@@ -172,6 +178,7 @@ impl Stage {
             Attribute::Alternative(alternative) => drawing.alternative = alternative,
             Attribute::Frames(frames) => drawing.frames = frames,
             Attribute::Rate(rate) => drawing.rate = rate,
+            Attribute::Label(label) => drawing.label = label,
             Attribute::Parent(parent) => {
                 let old = core::mem::replace(&mut drawing.parent, parent);
                 self.children.remove(&(old, number));

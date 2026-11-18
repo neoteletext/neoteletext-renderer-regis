@@ -9,13 +9,14 @@ ReGIS v2 is ReGIS v1, unchanged, plus one command that lets a drawing be numbere
 The changes, all additive:
 
 1. One new command, `D`, to define, change and delete numbered drawings.
-2. Attributes per numbered drawing: position, depth, visible, parent, source, detectable, clip rectangle; since 16 November 2026 the hover look and the pressed look; since 18 November 2026 the layer, the alternative look, the frame list and the paint rate.
+2. Attributes per numbered drawing: position, depth, visible, parent, source, detectable, clip rectangle; since 16 November 2026 the hover look and the pressed look; since 18 November 2026 the layer, the alternative look, the frame list, the paint rate and the label a screen reader speaks.
 3. The renderer keeps numbered drawings and repaints the screen itself when one changes.
 4. Commit: staged changes appear together, or are rejected together.
 5. A defined starting state for each numbered drawing, so nothing leaks between them.
 6. Screen, load and report commands are ignored inside a numbered drawing.
 7. A pick record names the drawing under each pixel, so a screen position can be resolved to a drawing.
 8. Since 18 November 2026, animation by the receiver: an animation state it sets on numbered drawings, four layers, frame lists and a paint rate (see Animation).
+9. Since 18 November 2026, a title the picture carries for page lists, `D(T'...')` (see Title).
 
 This document covers the language and the renderer only. How the bytes are carried, how input reaches the application, and how a server keeps and resends a scene are outside its scope: the system that embeds the renderer defines them.
 
@@ -77,7 +78,7 @@ D(C)                                          commit
 
 ## Attributes
 
-Every numbered drawing has the same thirteen attributes. The hover look and the pressed look, added on 16 November 2026, take effect only through the viewer state (below). The last four were added on 18 November 2026 with animation (below).
+Every numbered drawing has the same fourteen attributes. The hover look and the pressed look, added on 16 November 2026, take effect only through the viewer state (below). The layer, the alternative look, the frame list and the paint rate were added on 18 November 2026 with animation (below), and the label the same day, so that the three renderers are equals (DEC-6638 item 6).
 
 | Attribute | Meaning | Default |
 | --- | --- | --- |
@@ -94,6 +95,7 @@ Every numbered drawing has the same thirteen attributes. The hover look and the 
 | Alternative look | Another drawing to draw in its place while the receiver forces the alternative look | None |
 | Frame list | 1 to 16 drawings, of which the one numbered by the frame in force is drawn in its place | None |
 | Paint rate | How fast the receiver paints it, in hundreds of work units a second; 0 paints it at once | 0 |
+| Label | What a screen reader speaks for it: one short line of plain text, never drawn | None |
 
 - A child moves, hides and clips with its parent.
 - A drawing has exactly one parent. A change of parent applies to the staged scene at once and shows at commit; from then on it moves, hides and clips with the new parent, and is no longer deleted with the old one.
@@ -105,6 +107,7 @@ Every numbered drawing has the same thirteen attributes. The hover look and the 
 - **Screen position:** the sum of the positions up the parent chain, computed in 32 bits so it cannot overflow.
 - **Range:** inside a drawing, coordinates may use the full 16-bit range. Only the screen edge and clip rectangles cut drawing off, so a scrolling list can be taller than the screen.
 - Position is the only transform. There is no scaling, rotation or mirroring.
+- **Label:** it changes no pixel and nothing picking reports. The receiver reads it with the drawing's rectangle (`Terminal::label`, `Terminal::labels`, `Terminal::bounds`) and gives both to the screen-reader tree; a sender reads it from the validator the same way. A drawing drawn as another's source, look or frame does not lend its label: the drawing that places it is the one spoken. It is applied at the commit, as every attribute is.
 
 ## Rules for contents
 
@@ -121,6 +124,10 @@ Two consequences:
 - Outside numbered drawings, `S(E)` and scroll act on the base only. Numbered drawings stay where they are.
 
 * Numbered drawings lie over whichever v1 graphics page is displayed.
+
+## Title
+
+A picture may carry a title: the name a page list (history, bookmarks, a program's index) shows for it when the program's own index gives none (DEC-6638 item 3). `D(T'Harbour webcam')` sets it and `D(T'')` removes it. It is staged and applied at the commit like a `D` operation on a drawing, survives `D(Z)`, which deletes drawings and not the picture's name, and is cleared by a terminal reset. It is never drawn. The receiver reads it with `Terminal::title`, a sender with `Validator::title`. v1 has no command that carries text without drawing it, which is why the title is a `D` operation: `D` is the one command v2 adds.
 
 ## Commit and repaint
 
@@ -304,10 +311,11 @@ This section fixes the syntax of `D`. It follows v1 conventions: options in pare
 | `D(K<n>)` | Delete drawing *n* and its children. |
 | `D(Z)` | Delete all numbered drawings. |
 | `D(C)` | Commit. |
+| `D(T'<text>')` | Set the picture's title; `D(T'')` removes it. |
 
 - *n* is a decimal number from 1 to 65,535.
 - `B` or `S` on an unused number creates that drawing with default attributes.
-- `S`, `K`, `Z` and `C` may be combined in one command, separated by commas and carried out left to right: `D(S12(X240),S13(X260),C)`. `B` and `E` always stand alone.
+- `S`, `K`, `Z`, `T` and `C` may be combined in one command, separated by commas and carried out left to right: `D(S12(X240),S13(X260),T'Score board',C)`. `B` and `E` always stand alone.
 - A malformed `D` operation makes the current batch fail at commit (code 7). Parsing resumes at the next semicolon, the v1 resynchronisation character.
 
 ### Definitions
@@ -338,12 +346,14 @@ This section fixes the syntax of `D`. It follows v1 conventions: options in pare
 | `N` | Alternative look | Drawing number, or 0 for none | 0 |
 | `F` | Frame list | `F(<n>,<n>,…)`: 1 to 16 drawing numbers from 1 to 65,535, with commas between; or `F0` for none | None |
 | `T` | Paint rate (time) | 0 to 32,767 | 0 |
+| `U` | Label (utterance) | A quoted string, as v1 quotes one (`'…'` or `"…"`, the quote doubled inside): at most 64 bytes of plain text, or `''` for none | None |
 
 - Attribute values are 16-bit signed integers, the size v1 uses for coordinates ([chapter 1](https://vt100.net/docs/vt3xx-gp/chapter1.html)).
 - A sign is part of the value and never means a relative move. Bracketed coordinates are not used in `D`, because in v1 a signed number in brackets is relative.
 - Attributes not named in an `S` are left unchanged.
-- The letters were chosen among those `D` had left: `G` for group, since `L` is the depth; `N` for the alternative look, since `A` is the pressed look; `T` for time.
-- Out of range, a value is malformed and fails the batch with code 7: a layer above 3, a rate above 32,767 or below 0, a reference above 65,535, `F` with any number but 0, an empty `F()`, a frame of 0 or above 65,535, a seventeenth frame, or anything in `F(…)` but numbers and commas.
+- The letters were chosen among those `D` had left: `G` for group, since `L` is the depth; `N` for the alternative look, since `A` is the pressed look; `T` for time; `U` for the label, what a screen reader utters, since `L` is the depth.
+- **Labels and titles are plain text** of at most 64 bytes (`MAX_LABEL_BYTES` and `MAX_TITLE_BYTES` in `regis::limits`): the bytes a v1 quoted string keeps (printable ASCII and 10/0 to 15/15; the lexer drops other control characters and 8/0 to 9/15 as v1 does in any string), read as ISO/IEC 8859-1, with no backspace, tab, line feed or carriage return. A longer one, or one holding those four, is malformed and fails the batch with code 7, as does a string after any other letter. Text in other scripts waits for the Unicode text runs of DEC-6638 item 5.
+- Out of range, a value is malformed and fails the batch with code 7: a label or title as above, a layer above 3, a rate above 32,767 or below 0, a reference above 65,535, `F` with any number but 0, an empty `F()`, a frame of 0 or above 65,535, a seventeenth frame, or anything in `F(…)` but numbers and commas.
 
 ### Failed commits
 
@@ -442,6 +452,7 @@ Animation added these (18 November 2026), in `crates/regis/tests/animation.rs`, 
 9. **Bounding rectangles.** Every pixel a drawing writes lies inside its rectangle.
 10. **Golden image sequences.** `regis-render --frames` plays five fixtures (the attributes' examples, the same drawings in each layer and order, a four-frame cycle by both formulas, a drawing with two children painted at their rates), and each image's checksum is held to `crates/regis-render/tests/golden/sequences.txt`, which carries a format version.
 11. **The cost of a move.** Moving a 20-pixel drawing 4 pixels over a background drawing and 30 others, measured on 18 November 2026: 1,178,384 work units and 5.4 ms (release build) by a commit with the whole picture rebuilt; 8,965 work units on average, 10,996 at most, and 37 microseconds by animation state. The work is held to 12,000 units a move.
+12. **Labels and titles.** `crates/regis/tests/labels_and_titles.rs`: a label and a title are kept at the commit and change no pixel and no pick; they can be changed and removed; a label is read as ISO/IEC 8859-1; one of 64 bytes is kept and one of 65, or holding a tab or a line break, fails the batch with code 7; the title survives `D(Z)`; the validator gives the same. `crates/regis-minify/tests/rewriting.rs`: the rewriter copies them as written and the rewritten stream commits the same labels and title.
 
 ## Open decisions
 
@@ -485,6 +496,8 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
     8. **`Terminal::animation` and `Terminal::drawing_position`** were added beside the four calls the specification names: a receiver reads the first after a commit to learn what the stream wrote over, and a relative move adds to the second.
     9. **Property testing drives the target `regis_animation`** (DEC-6603, under DEC-6579): `crates/regis-fuzz/tests/regis_animation.rs` runs it on every kept input, then on inputs the library proptest makes anew on each run, reduces an input that fails and keeps it. The library is a development dependency of the crate `regis-fuzz` alone; the renderer has none. cargo-fuzz's engine is C++ and is not used.
     10. **`Terminal::committed_drawing` and `Terminal::visible_drawing`, with the same two on `Validator`,** were added for the page rule table and the server (neoteletext-common `docs/page-rules.md`, RULE-26; `docs/animation.md`, ANIM-17). The first gives a drawing's shown part, layer and depth order as the stream committed them, apart from the animation state, and `None` when it does not exist. The second names the lowest-numbered top-level drawing that is shown and has a bounding rectangle on the screen; a server refuses a sprite sheet that leaves one. A shown drawing that writes nothing on the screen is not one, and the rectangle is the one measured at the commit, so a drawing whose rectangle touches the screen while its pixels do not is named too. `Validator::base_work` gives the work units spent drawing outside numbered drawings, 0 when the bytes drew nothing on the base picture, which a sheet must not do either.
+
+13. **Labels and titles, added 18 November 2026** (DEC-6638 items 3 and 6; the requirements are recorded in rdm under DEC-6638): the attribute `U` and the operation `D(T'...')`, with `Terminal::label`, `Terminal::labels` and `Terminal::title` and the same three on `Validator`. They give ReGIS v2 what the NAPLPS renderer's objects and pictures were given at the same time, so that a screen reader and a page list can treat the three renderers alike. `regis-minify`'s check compares the labels and title a rewriting commits, as it compares pixels.
 
 The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
 

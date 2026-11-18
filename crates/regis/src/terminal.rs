@@ -3,6 +3,7 @@
 mod source;
 mod stream;
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::event::Event;
@@ -165,6 +166,34 @@ impl Terminal {
     #[must_use]
     pub fn committed_drawing(&self, number: u16) -> Option<CommittedDrawing> {
         self.scene.committed_drawing(number)
+    }
+
+    /// The label a screen reader speaks for numbered drawing `number`, as
+    /// the last successful commit left it: the attribute `U` (DEC-6638
+    /// item 6, `docs/regis-v2.md`, "Attributes"). `None` when the drawing
+    /// does not exist or has no label. A label is never drawn; the caller
+    /// gives it to the screen-reader tree with the drawing's rectangle
+    /// ([`Terminal::bounds`]). Its bytes, which a v1 quoted string carries,
+    /// are read as ISO/IEC 8859-1.
+    #[must_use]
+    pub fn label(&self, number: u16) -> Option<String> {
+        self.scene.label(number)
+    }
+
+    /// Every committed numbered drawing that has a label, in order of
+    /// number, with its label.
+    #[must_use]
+    pub fn labels(&self) -> Vec<(u16, String)> {
+        self.scene.labels()
+    }
+
+    /// The picture's title, as the last successful commit left it:
+    /// `D(T'...')`, the name a page list shows for the picture when the
+    /// program's index gives none (DEC-6638 item 3, `docs/regis-v2.md`,
+    /// "Title"). `None` when it has none. A title is never drawn.
+    #[must_use]
+    pub fn title(&self) -> Option<String> {
+        self.scene.title()
     }
 
     /// The lowest-numbered top-level drawing that can write on the

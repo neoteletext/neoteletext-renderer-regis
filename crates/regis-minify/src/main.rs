@@ -33,7 +33,8 @@ const ESCAPE: u8 = 0x1B;
 const PAGES: usize = 2;
 
 /// Everything a stream does that a viewer could tell: both pages, the
-/// colours, and what it asked of the terminal.
+/// colours, what it asked of the terminal, and what a screen reader or a
+/// page list would say of it.
 #[derive(PartialEq)]
 struct Drawn {
     pages: Vec<Vec<u8>>,
@@ -43,6 +44,10 @@ struct Drawn {
     /// whatever its paint rate, and the pick record: what ReGIS v2 shows.
     composed: Vec<u8>,
     picks: Vec<u16>,
+    /// The labels and the title committed: never drawn, but a screen
+    /// reader and a page list show them (DEC-6638 items 3 and 6).
+    labels: Vec<(u16, String)>,
+    title: Option<String>,
 }
 
 fn draw(input: &[u8]) -> Drawn {
@@ -61,6 +66,8 @@ fn draw(input: &[u8]) -> Drawn {
         events,
         composed: picture.canvas().pixels().to_vec(),
         picks: picture.pick_record().to_vec(),
+        labels: terminal.labels(),
+        title: terminal.title(),
     }
 }
 

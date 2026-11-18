@@ -210,6 +210,7 @@ nav { font-size: 0.95rem; color: var(--muted); }
 <tr><td><code>D(S n(attributes))</code></td><td>Sets attributes of drawing <code>n</code>.</td></tr>
 <tr><td><code>D(K n)</code>, <code>D(Z)</code></td><td>Deletes drawing <code>n</code> and its children; deletes every drawing.</td></tr>
 <tr><td><code>D(C)</code></td><td>Commit: everything since the last commit takes effect at once, or none of it does.</td></tr>
+<tr><td><code>D(T'text')</code></td><td>The picture's title for page lists, applied at the commit; <code>D(T'')</code> removes it. Never drawn; <code>D(Z)</code> keeps it.</td></tr>
 </table>
 <table>
 <tr><th>Attribute</th><th>Value</th><th>Meaning</th></tr>
@@ -225,7 +226,9 @@ nav { font-size: 0.95rem; color: var(--muted); }
 <tr><td><code>N</code></td><td class="n">a drawing, or 0</td><td>Alternative look: drawn in its place while the receiver forces it</td></tr>
 <tr><td><code>F</code></td><td class="n"><code>F(n,n,…)</code>, 1 to 16 drawings, or <code>F0</code></td><td>Frame list: the entry the frame in force names is drawn in its place</td></tr>
 <tr><td><code>T</code></td><td class="n">0 to 32,767</td><td>Paint rate: painted gradually at 100 work units a second for each unit; 0 at once</td></tr>
+<tr><td><code>U</code></td><td class="n"><code>U'text'</code>, at most 64 bytes, or <code>U''</code></td><td>Label: what a screen reader speaks for it. Never drawn</td></tr>
 </table>
+<p>A label or a title is a quoted string as v1 writes one, read as ISO/IEC 8859-1, with no backspace, tab, line feed or carriage return; anything else in its place is malformed. <code>Terminal::label</code>, <code>labels</code> and <code>title</code> (and the same on <code>Validator</code>) read what the last commit left.</p>
 <p>What is drawn in a drawing's place, in order: a look the receiver forces; the pressed look while it is pressed; the hover look while it is hovered; the frame in force; the source; its own contents. A malformed operation or attribute fails its batch at the commit with code 7. Inside a drawing <code>S</code>, <code>L</code>, <code>R</code> and <code>D</code> have no effect.</p>
 
 <h2 id="raster">How shapes become pixels</h2>
@@ -263,6 +266,7 @@ nav { font-size: 0.95rem; color: var(--muted); }
 <tr><td>Layers</td><td class="n">4</td><td>The attribute is malformed: code 7</td></tr>
 <tr><td>Frames in a frame list</td><td class="n">16</td><td>The attribute is malformed: code 7</td></tr>
 <tr><td>Paint rate</td><td class="n">32,767</td><td>The attribute is malformed: code 7</td></tr>
+<tr><td>A label, a title</td><td class="n">64 bytes each</td><td>Malformed: code 7</td></tr>
 <tr><td>Drawings holding animation state</td><td class="n">64</td><td><code>set_animation</code> returns false</td></tr>
 <tr><td>Animation in one tick, kept by the receiver</td><td class="n">192,000 pixels; 3,333,333 work units; 16 drawings cycling</td><td>The animation is slowed</td></tr>
 </table>

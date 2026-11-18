@@ -220,9 +220,14 @@ impl Scene {
                 self.note_deleted();
             }
             Operation::DeleteAll => {
+                // `D(Z)` deletes drawings; the title is the picture's, not a
+                // drawing's, and stays.
+                let title = self.staged.title;
                 self.staged = Stage::default();
+                self.staged.title = title;
                 self.note_deleted();
             }
+            Operation::Title(title) => self.staged.title = title,
             Operation::Malformed(drawing) => self.fail(base, CommitError::Malformed, drawing),
             Operation::Commit => {
                 let event = match self.commit(base) {

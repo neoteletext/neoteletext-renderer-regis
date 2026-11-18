@@ -152,6 +152,7 @@ for (index, pixel) in page.pixels().iter().enumerate() {
 <tr><td><code>Terminal::animation(number)</code></td><td>The state held. A commit that sets the same attribute writes over a part of it, and a deletion over all of it.</td></tr>
 <tr><td><code>Terminal::drawing_position(number)</code></td><td>The position in force, which a relative move adds to.</td></tr>
 <tr><td><code>Terminal::committed_drawing(number)</code></td><td>What the stream committed for the drawing, apart from the animation state: shown (<code>V</code>), layer (<code>G</code>) and depth order (<code>L</code>). Nothing when the drawing does not exist.</td></tr>
+<tr><td><code>Terminal::label(number)</code>, <code>Terminal::labels()</code>, <code>Terminal::title()</code></td><td>The committed label of a drawing (<code>U</code>), every labelled drawing with its label, and the picture's title (<code>D(T'...')</code>). Never drawn: they are for a screen reader and for page lists. <code>Validator</code> has the same three.</td></tr>
 <tr><td><code>Terminal::visible_drawing()</code></td><td>The lowest-numbered top-level drawing that is shown and reaches the screen, or nothing. <code>Validator</code> has the same two calls, and <code>Validator::base_work()</code>, the work spent drawing outside numbered drawings: a server asks after feeding a sprite sheet, which must leave no drawing visible and draw nothing on the base picture.</td></tr>
 <tr><td><code>Terminal::bounds(number)</code></td><td>The drawing's bounding <code>Rectangle</code> on the screen, for collision and region tests; <code>None</code> while it is not shown.</td></tr>
 <tr><td><code>Terminal::advance_ticks(ticks)</code></td><td>Says that ticks of a sixtieth of a second have passed. Drawings with a paint rate (<code>T</code>) are painted that much further at the next <code>compose</code>. True while anything is still being painted.</td></tr>
@@ -174,6 +175,7 @@ assert_eq!(picture.canvas().pixel(305, 205), Some(3));</code></pre>
 <li><strong>Layers.</strong> A top-level drawing is in layer 0 (background), 1 (scene, the default), 2 (sprites) or 3 (overlay), by its attribute <code>G</code>. Put what never moves in <code>G0</code>: it is kept painted, and a drawing moving above it replays none of it.</li>
 <li><strong>Frames.</strong> <code>D(S40(F(41,42,43,44)))</code> gives drawing 40 four frames, each a drawing; the state's <code>frame</code> chooses which is drawn. The renderer has no clock: to cycle, the caller sets the frame each tick.</li>
 <li><strong>Looks.</strong> <code>H</code>, <code>A</code> and <code>N</code> name the hover, pressed and alternative looks. The state's <code>look</code> forces one whatever the pointer does.</li>
+<li><strong>Labels and a title.</strong> <code>D(S10(I1,U'Next page'),T'Harbour webcam',C)</code> gives the button drawn by drawing 10 the words a screen reader speaks for it, and the picture the name a page list shows. Neither is drawn. Each is at most 64 bytes of plain text in a quoted string; the bytes are read as ISO/IEC 8859-1.</li>
 <li><strong>Paint rate.</strong> <code>D(S7(T50))</code> paints drawing 7 at 5,000 work units a second, about that many pixels of line: it appears as it is drawn. Its children wait for it.</li>
 </ul>
 <p>The tool plays all of this into images, the same on every run, for tests and golden files:</p>
@@ -191,7 +193,7 @@ assert_eq!(picture.canvas().pixel(305, 205), Some(3));</code></pre>
 <tr><td><code>stop_cycle n</code></td><td>Stops the cycle; the frame stays.</td></tr>
 <tr><td><code>reset n</code></td><td>Forgets the drawing's whole animation state.</td></tr>
 </table>
-<p>An operation on a drawing that does not exist does nothing and is counted; the count is printed on standard error. <code>regis-minify</code> copies <code>D</code> commands as written and checks its result against the composed picture and its pick record, with every drawing painted to its end.</p>
+<p>An operation on a drawing that does not exist does nothing and is counted; the count is printed on standard error. <code>regis-minify</code> copies <code>D</code> commands as written and checks its result against the composed picture and its pick record, with every drawing painted to its end, and against the labels and title it commits.</p>
 
 <h2 id="fonts">Fonts</h2>
 <p>The manual does not give the shapes of the VT340's characters, so the caller supplies them as text. The repository ships two fonts and one loadable set:</p>

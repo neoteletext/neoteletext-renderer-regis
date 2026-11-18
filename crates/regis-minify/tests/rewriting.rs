@@ -157,3 +157,27 @@ fn the_animation_example_is_composed_the_same() {
     assert!(rewritten.contains("D(S7(G1,X250,Y40,T50))"));
     assert_eq!(composed(&rewritten), composed(&input));
 }
+
+/// The labels and the title a stream commits (DEC-6638 items 3 and 6).
+fn spoken(input: &str) -> (Vec<(u16, String)>, Option<String>) {
+    let mut terminal = Terminal::new();
+    let mut screen = Screen::new();
+    let _ = terminal.feed_regis(&mut screen, input.as_bytes());
+    let _ = terminal.finish(&mut screen);
+    (terminal.labels(), terminal.title())
+}
+
+#[test]
+fn labels_and_titles_pass_through_as_written() {
+    // A label and a title are quoted strings: blanks and doubled quotes
+    // inside them are theirs, and are kept.
+    let commands = "D(S40(I1,U'Next  page'),S41(U\"Say \"\"hi\"\"\"),T'Harbour  webcam',C)";
+    assert_eq!(short(commands), commands);
+    assert_eq!(exact(commands), commands);
+    let input = "P[5,5]V[50,5] D(B3)P[0,0]V[19,0]D(E) D(S3(X10, U'Play'), T'Arcade', C)";
+    let rewritten = short(input);
+    assert!(rewritten.len() < input.len());
+    assert_eq!(spoken(&rewritten), (vec![(3, "Play".to_owned())], Some("Arcade".to_owned())));
+    assert_eq!(spoken(&rewritten), spoken(input));
+    assert_eq!(composed(&rewritten), composed(input));
+}

@@ -129,6 +129,16 @@ pub const PAINT_RATE_UNIT: u64 = 100;
 /// (DEC-6382 item 1; ANIM-10).
 pub const MAX_PAINT_RATE: u16 = 32_767;
 
+/// Bytes of a numbered drawing's label, the attribute `U`: the text a
+/// screen reader speaks for it (DEC-6638 item 6, row 6.1). The same bound
+/// as a sound's label in the engine's OBJECT record (REQ-37) and an object's
+/// label in the NAPLPS renderer.
+pub const MAX_LABEL_BYTES: usize = 64;
+/// Bytes of a picture's title, `D(T'...')`: the name a page list shows for
+/// the picture when the program's index gives none (DEC-6638 item 3, row
+/// 2.8). One short line, as a label is.
+pub const MAX_TITLE_BYTES: usize = 64;
+
 // Half a picture, as ANIM-16 derives the figure.
 const _: () =
     assert!(MAX_ANIMATION_PIXELS_PER_TICK == crate::surface::SCREEN_WIDTH * crate::surface::SCREEN_HEIGHT / 2);
