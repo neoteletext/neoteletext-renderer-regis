@@ -160,28 +160,32 @@ impl Picture {
     }
 
     /// Starts a picture: the background's pixels and pick record are put
-    /// back in the rectangle to be repainted, or everywhere when the
-    /// picture is painted whole.
+    /// back in each rectangle to be repainted, or everywhere when the
+    /// picture is painted whole; `bounds` holds them all, and its rows are
+    /// kept to find which changed.
     pub(super) fn begin(
         &mut self,
         base: &Canvas,
-        damage: Option<Bounds>,
+        bounds: Option<Bounds>,
+        rectangles: &[Bounds],
         whole: bool,
         origins: BTreeMap<u16, (i32, i32)>,
     ) {
         self.origins = origins;
         let mut previous = core::mem::take(&mut self.previous);
         previous.clear();
-        if let Some(damage) = damage {
-            previous.extend_from_slice(self.rows(damage));
+        if let Some(bounds) = bounds {
+            previous.extend_from_slice(self.rows(bounds));
         }
         self.previous = previous;
         if let Some(canvas) = self.screen.page_mut(0) {
             canvas.set_window(Window::page());
-            match damage {
-                _ if whole => canvas.copy_from(base),
-                Some(damage) => canvas.restore(base, damage),
-                None => {}
+            if whole {
+                canvas.copy_from(base);
+            } else {
+                for &area in rectangles {
+                    canvas.restore(base, area);
+                }
             }
         }
     }

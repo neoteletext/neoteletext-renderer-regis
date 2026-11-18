@@ -5,7 +5,8 @@
 //! The scene is first laid out as a list of steps, each one drawing's
 //! contents replayed at one place. A picture painted before keeps its
 //! list, so the next one finds what changed and repaints only the
-//! rectangle that holds it: the same steps, cut to that rectangle.
+//! rectangles that hold it, each apart from the others: the same steps,
+//! cut to each rectangle.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -14,7 +15,10 @@ use super::animation::{AnimationState, ForcedLook, painted_after};
 use super::picture::{Painted, Picture};
 use super::stage::{Contents, Drawing, Stage};
 use super::{Scene, ViewerState};
-use crate::limits::{DRAWING_BYTE_COST, DRAWING_VISIT_COST, MAX_DAMAGE_STEPS, MAX_DRAWING_DEPTH, MAX_REBUILD_WORK};
+use crate::limits::{
+    DAMAGE_LOOKAHEAD_STEPS, DRAWING_BYTE_COST, DRAWING_VISIT_COST, MAX_DAMAGE_RECTANGLES, MAX_DAMAGE_STEPS,
+    MAX_DRAWING_DEPTH, MAX_REBUILD_WORK,
+};
 use crate::palette::Palette;
 use crate::surface::{Bounds, Screen, Window};
 use crate::terminal::Interpreter;
@@ -142,20 +146,138 @@ fn difference(old: &[u8], new: &[u8]) -> Option<Bounds> {
     bounds
 }
 
-/// The rectangle that holds everything two lists of steps paint
-/// differently. Steps the lists share at their start and at their end are
-/// painted the same and in the same order relative to everything else, so
-/// a pixel none of the others can change comes out as it did before.
-fn changed(old: &[Step], new: &[Step]) -> Option<Bounds> {
-    let same = |(old, new): (&Step, &Step)| old.same(new);
-    let start = old.iter().zip(new).take_while(|pair| same(*pair)).count();
-    let (old, new) = (old.get(start..).unwrap_or(&[]), new.get(start..).unwrap_or(&[]));
-    let end = old.iter().rev().zip(new.iter().rev()).take_while(|pair| same(*pair)).count();
-    let middle = |steps: &[Step]| {
-        let kept = steps.len().saturating_sub(end);
-        steps.get(..kept).unwrap_or(&[]).iter().fold(None, |bounds, step| Bounds::join(bounds, step.area))
-    };
-    Bounds::join(middle(old), middle(new))
+/// The rectangles that hold everything two lists of steps paint
+/// differently. The steps of the two lists are matched in order, each
+/// with one that is the same (`Step::same`): those matched paint the same
+/// and in the same order relative to one another in both, so a pixel no
+/// unmatched step can change comes out as it did before. Each unmatched
+/// step's area is damage; steps far apart give rectangles far apart, so
+/// that a key pressed at one side of a picture and a meter lit at the
+/// other repaint those two places and not every drawing between them.
+fn changed(old: &[Step], new: &[Step]) -> Damage {
+    let mut damage = Damage::default();
+    let (mut i, mut j) = (0, 0);
+    while i < old.len() || j < new.len() {
+        match (old.get(i), new.get(j)) {
+            (Some(was), Some(now)) if was.same(now) => {
+                i = i.saturating_add(1);
+                j = j.saturating_add(1);
+            }
+            (Some(was), Some(now)) => {
+                // A step added or taken away: the nearer of the two
+                // matches within the look-ahead, else both changed.
+                let ahead = |steps: &[Step], from: usize, step: &Step| {
+                    steps.iter().skip(from).take(DAMAGE_LOOKAHEAD_STEPS).position(|other| other.same(step))
+                };
+                match (ahead(new, j, was), ahead(old, i, now)) {
+                    (Some(added), removed) if removed.is_none_or(|removed| added <= removed) => {
+                        for step in new.iter().skip(j).take(added) {
+                            damage.add(step.area);
+                        }
+                        j = j.saturating_add(added);
+                    }
+                    (_, Some(removed)) => {
+                        for step in old.iter().skip(i).take(removed) {
+                            damage.add(step.area);
+                        }
+                        i = i.saturating_add(removed);
+                    }
+                    _ => {
+                        damage.add(was.area);
+                        damage.add(now.area);
+                        i = i.saturating_add(1);
+                        j = j.saturating_add(1);
+                    }
+                }
+            }
+            (Some(was), None) => {
+                damage.add(was.area);
+                i = i.saturating_add(1);
+            }
+            (None, Some(now)) => {
+                damage.add(now.area);
+                j = j.saturating_add(1);
+            }
+            (None, None) => break,
+        }
+    }
+    damage
+}
+
+/// The rectangles of a picture to repaint: at most
+/// `MAX_DAMAGE_RECTANGLES`, none meeting another; past that the two whose
+/// joining adds least are joined.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Damage {
+    rectangles: Vec<Bounds>,
+}
+
+impl Damage {
+    /// The whole picture.
+    fn page() -> Self {
+        Self { rectangles: alloc::vec![Bounds::page()] }
+    }
+
+    /// Adds an area, joining it with every rectangle it meets.
+    fn add(&mut self, area: Option<Bounds>) {
+        let Some(mut joined) = area.and_then(|area| area.within(Bounds::page())) else { return };
+        // A joined rectangle can meet others it did not before.
+        while let Some(index) = self.rectangles.iter().position(|held| held.within(joined).is_some()) {
+            joined = joined.with(self.rectangles.swap_remove(index));
+        }
+        if self.rectangles.len() < MAX_DAMAGE_RECTANGLES {
+            self.rectangles.push(joined);
+            return;
+        }
+        let growth = |held: &Bounds| area_of(held.with(joined)).saturating_sub(area_of(*held));
+        let Some(index) =
+            self.rectangles.iter().enumerate().min_by_key(|(_, held)| growth(held)).map(|(index, _)| index)
+        else {
+            return;
+        };
+        let merged = self.rectangles.swap_remove(index).with(joined);
+        self.add(Some(merged));
+    }
+
+    /// Adds every rectangle of another.
+    fn join(&mut self, other: &Self) {
+        for &area in &other.rectangles {
+            self.add(Some(area));
+        }
+    }
+
+    /// Joins every rectangles one step meets, until no step meets two:
+    /// each step is then replayed for one rectangle at most, so that a
+    /// repaint costs no more than painting the picture whole, whose every
+    /// step is replayed once.
+    fn once_per_step(&mut self, steps: &[Step]) {
+        loop {
+            let shared = steps.iter().find_map(|step| {
+                let area = step.area?;
+                let mut met = self.rectangles.iter().filter(|held| held.within(area).is_some());
+                let first = *met.next()?;
+                met.next().map(|second| first.with(*second))
+            });
+            let Some(joined) = shared else { return };
+            self.add(Some(joined));
+        }
+    }
+
+    /// The rectangle that holds them all, if any.
+    fn bounds(&self) -> Option<Bounds> {
+        self.rectangles.iter().fold(None, |bounds, area| Bounds::join(bounds, Some(*area)))
+    }
+
+    /// The rectangles.
+    pub(super) fn rectangles(&self) -> &[Bounds] {
+        &self.rectangles
+    }
+}
+
+/// The pixels of a rectangle.
+fn area_of(area: Bounds) -> u64 {
+    let side = |low: i32, high: i32| u64::from(high.saturating_sub(low).saturating_add(1).unsigned_abs());
+    side(area.left, area.right).saturating_mul(side(area.top, area.bottom))
 }
 
 /// Replays the first part of a drawing's contents: everything before the
@@ -248,7 +370,7 @@ impl Scene {
             // A scene of more steps than a picture keeps is painted whole
             // each time, straight from the drawings, in the same order.
             picture.background = None;
-            picture.begin(base, Some(Bounds::page()), true, origins);
+            picture.begin(base, Some(Bounds::page()), &[], true, origins);
             for (_, _, number) in &top {
                 let mut painter =
                     |step: Step| paint(&mut self.player, picture.screen_mut(), &step, Bounds::page(), true, &mut work);
@@ -263,10 +385,15 @@ impl Scene {
             Some(before) => {
                 let (old_behind, old_over) =
                     before.steps.split_at_checked(before.background).unwrap_or((&before.steps, &[]));
-                let behind_damage = Bounds::join(difference(&before.base, base.pixels()), changed(old_behind, behind));
-                (behind_damage, Bounds::join(behind_damage, changed(old_over, over)))
+                let mut behind_damage = changed(old_behind, behind);
+                behind_damage.add(difference(&before.base, base.pixels()));
+                behind_damage.once_per_step(behind);
+                let mut damage = changed(old_over, over);
+                damage.join(&behind_damage);
+                damage.once_per_step(over);
+                (behind_damage, damage)
             }
-            None => (Some(Bounds::page()), Some(Bounds::page())),
+            None => (Damage::page(), Damage::page()),
         };
         let mut raster = picture.background.take();
         if behind.is_empty() {
@@ -275,35 +402,23 @@ impl Scene {
         } else {
             let fresh = raster.is_none();
             if fresh {
-                (behind_damage, damage) = (Some(Bounds::page()), Some(Bounds::page()));
+                (behind_damage, damage) = (Damage::page(), Damage::page());
             }
             let raster = raster.get_or_insert_with(Screen::single);
-            if let Some(area) = behind_damage {
-                if let Some(canvas) = raster.page_mut(0) {
-                    canvas.set_window(Window::page());
-                    if whole || fresh {
-                        canvas.copy_from(base);
-                    } else {
-                        canvas.restore(base, area);
-                    }
-                }
-                for step in behind {
-                    paint(&mut self.player, raster, step, area, whole || fresh, &mut work);
-                }
-                if let Some(canvas) = raster.page_mut(0) {
-                    canvas.set_window(Window::page());
-                    canvas.tidy_pick();
-                }
-            }
+            repaint_background(&mut self.player, raster, base, behind, &behind_damage, whole || fresh, &mut work);
         }
         let beneath = raster.as_ref().map_or(base, Screen::displayed);
-        picture.begin(beneath, damage, whole, origins);
-        if let Some(damage) = damage {
+        let bounds = damage.bounds();
+        picture.begin(beneath, bounds, damage.rectangles(), whole, origins);
+        for &area in damage.rectangles() {
             for step in over {
-                paint(&mut self.player, picture.screen_mut(), step, damage, whole, &mut work);
+                paint(&mut self.player, picture.screen_mut(), step, area, whole, &mut work);
+            }
+            if whole {
+                break;
             }
         }
-        picture.end(self.commits, work, damage);
+        picture.end(self.commits, work, bounds);
         picture.background = raster;
         let mut kept = before.map(|before| before.base).unwrap_or_default();
         kept.clear();
@@ -315,6 +430,43 @@ impl Scene {
             palette: palette.clone(),
             tables_version: self.tables_version,
         });
+    }
+}
+
+/// Repaints layer 0 over the base into the background raster: whole, or
+/// each rectangle of `damage` put back from the base and repainted on its
+/// own (animation.md ANIM-12).
+fn repaint_background(
+    player: &mut Interpreter,
+    raster: &mut Screen,
+    base: &crate::surface::Canvas,
+    behind: &[Step],
+    damage: &Damage,
+    whole: bool,
+    work: &mut u64,
+) {
+    if whole {
+        if let Some(canvas) = raster.page_mut(0) {
+            canvas.set_window(Window::page());
+            canvas.copy_from(base);
+        }
+        for step in behind {
+            paint(player, raster, step, Bounds::page(), true, work);
+        }
+    } else {
+        for &area in damage.rectangles() {
+            if let Some(canvas) = raster.page_mut(0) {
+                canvas.set_window(Window::page());
+                canvas.restore(base, area);
+            }
+            for step in behind {
+                paint(player, raster, step, area, false, work);
+            }
+        }
+    }
+    if let Some(canvas) = raster.page_mut(0) {
+        canvas.set_window(Window::page());
+        canvas.tidy_pick();
     }
 }
 
