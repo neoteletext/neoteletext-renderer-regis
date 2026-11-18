@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use regis::{Screen, Terminal};
+use regis::{Picture, Screen, Terminal};
 use regis_minify::{Level, minify};
 
 fn short(input: &str) -> String {
@@ -115,4 +115,45 @@ fn every_sample_draws_the_same_after_rewriting() {
 fn rewriting_what_is_already_short_changes_nothing() {
     let once = minify(b"W(I3)P[100,100]V[102,100][102,103]T'x'P[5,5]", Level::Joined);
     assert_eq!(minify(&once, Level::Joined), once);
+}
+
+/// The picture with its numbered drawings, each painted to its end.
+fn composed(input: &str) -> (Vec<u8>, Vec<u16>) {
+    let mut terminal = Terminal::new();
+    let mut screen = Screen::new();
+    let _ = terminal.feed_regis(&mut screen, input.as_bytes());
+    let _ = terminal.finish(&mut screen);
+    let _ = terminal.advance_ticks(u32::MAX);
+    let mut picture = Picture::new();
+    terminal.compose(&screen, &mut picture);
+    (picture.canvas().pixels().to_vec(), picture.pick_record().to_vec())
+}
+
+#[test]
+fn drawing_commands_pass_through_with_every_attribute() {
+    // The attributes of animation among them (animation.md, ANIM-10).
+    let commands = "D(S40(G2,X100,Y-240,I1,F(41,42,43,44),N45,T50,H1,A2,R3,L-4,V0,P9,C(X1,Y2,W3,H4)),S41(F0),K7,Z,C)";
+    assert_eq!(short(commands), commands);
+    assert_eq!(exact(commands), commands);
+}
+
+#[test]
+fn nothing_known_outside_a_numbered_drawing_holds_inside_it_or_after_it() {
+    // A drawing's contents start from a fresh context: the colour and
+    // the position set before it are not theirs.
+    let input = "W(I3)P[5,5]D(B1)W(I3)P[5,5]V[50,5]D(E)D(S1(I1),C)P[5,5]V[9,9]";
+    assert_eq!(short(input), "W(I3)P[5,5]D(B1)W(I3)P[5,5]V[50]D(E)D(S1(I1),C)P[5,5]V[9,9]");
+    assert_eq!(composed(&short(input)), composed(input));
+    assert_eq!(drawn(short(input).as_bytes()), drawn(input.as_bytes()));
+}
+
+#[test]
+fn the_animation_example_is_composed_the_same() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples/animation.regis");
+    let input = std::fs::read_to_string(path).unwrap();
+    let rewritten = short(&input);
+    assert!(rewritten.len() < input.len());
+    assert!(rewritten.contains("D(S40(G2,X100,Y240,I1,F(41,42,43,44),N45))"));
+    assert!(rewritten.contains("D(S7(G1,X250,Y40,T50))"));
+    assert_eq!(composed(&rewritten), composed(&input));
 }

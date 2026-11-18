@@ -23,7 +23,7 @@ use std::fs;
 use std::io::Read;
 use std::process::ExitCode;
 
-use regis::{Event, Screen, Terminal};
+use regis::{Event, Picture, Screen, Terminal};
 use regis_minify::{Level, minify};
 
 const USAGE: &str = "usage: regis-minify [--no-verify] INPUT OUTPUT";
@@ -39,6 +39,10 @@ struct Drawn {
     pages: Vec<Vec<u8>>,
     colours: Vec<[u8; 3]>,
     events: Vec<Event>,
+    /// The picture with its numbered drawings, each painted to its end
+    /// whatever its paint rate, and the pick record: what ReGIS v2 shows.
+    composed: Vec<u8>,
+    picks: Vec<u16>,
 }
 
 fn draw(input: &[u8]) -> Drawn {
@@ -48,7 +52,16 @@ fn draw(input: &[u8]) -> Drawn {
     let mut events = if framed { terminal.feed(&mut screen, input) } else { terminal.feed_regis(&mut screen, input) };
     events.extend(terminal.finish(&mut screen));
     let pages = (0..PAGES).filter_map(|number| screen.page(number).map(|page| page.pixels().to_vec())).collect();
-    Drawn { pages, colours: terminal.palette().colours().to_vec(), events }
+    let mut picture = Picture::new();
+    let _ = terminal.advance_ticks(u32::MAX);
+    terminal.compose(&screen, &mut picture);
+    Drawn {
+        pages,
+        colours: terminal.palette().colours().to_vec(),
+        events,
+        composed: picture.canvas().pixels().to_vec(),
+        picks: picture.pick_record().to_vec(),
+    }
 }
 
 fn read(path: &str) -> Result<Vec<u8>, String> {

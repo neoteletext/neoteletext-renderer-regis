@@ -101,6 +101,16 @@ impl Rewriter {
                 self.position = to;
                 self.undrawn.clear();
             }
+            (b'D', _) => {
+                // The drawing command of ReGIS v2 (`docs/regis-v2.md`): a
+                // numbered drawing's contents start from a fresh context,
+                // and the stream's own comes back after them, so nothing
+                // known on one side of a `D` holds on the other. The
+                // command itself is copied as written, whatever
+                // attributes it sets.
+                self.forget_everything();
+                self.pieces.push(Piece::Kept(Item::Command(command)));
+            }
             _ => {
                 // Any other command may move the position; none of them
                 // changes the write controls beyond its own end.
