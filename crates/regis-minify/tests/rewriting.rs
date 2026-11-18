@@ -181,3 +181,17 @@ fn labels_and_titles_pass_through_as_written() {
     assert_eq!(spoken(&rewritten), spoken(input));
     assert_eq!(composed(&rewritten), composed(input));
 }
+
+/// renderer-parity.md PAR-12: every alphabet selection is kept, the
+/// provided alphabets 100 to 154 among them, and one that changes nothing
+/// as well, since the rewriter does not follow text controls.
+#[test]
+fn every_alphabet_selection_is_kept() {
+    let input = "T(A117)P[0,0]T'abc'T(A144)T'`T'T(A144)T'x'T(A0)T'A'";
+    let output = exact(input);
+    assert_eq!(output.matches("(A").count(), 4, "{output}");
+    for alphabet in ["T(A117)", "T(A144)T'`T'T(A144)", "T(A0)"] {
+        assert!(output.contains(alphabet), "{alphabet} in {output}");
+    }
+    assert_eq!(short(input), output);
+}
