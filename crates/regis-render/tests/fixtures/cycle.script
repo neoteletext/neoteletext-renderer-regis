@@ -1,0 +1,4 @@
+# ANIM-14: a four-frame cycle of period 3. It starts at the tick after
+# the operation ran: frame 0 at ticks 1 to 3, 1 at 4 to 6, 2 at 7 to 9,
+# 3 at 10 to 12 and 0 again at 13.
+0 cycle 40 0 3 3

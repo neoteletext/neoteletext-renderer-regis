@@ -1,0 +1,26 @@
+# ANIM-12: the same three drawings in each layer and order. Drawing 23
+# is a child of drawing 21 and follows it; drawing 1 is a background
+# drawing (G0). At tick 0 all three are in layer 1 at order 0, drawn by
+# number.
+# Within a layer the order decides, lowest first.
+1 order 20 keep 5
+2 order 22 keep -5
+# A higher layer wins whatever the order.
+3 order 21 2 -128
+4 order 20 3 -128
+5 order 22 3 127
+# Equal orders in one layer: the number decides, and 22 stays over 20.
+6 order 22 3 -128
+# Each drawing in the background layer, under the others; among equal
+# orders the number decides, so drawing 1 is beneath them.
+7 order 21 0 0
+8 order 20 0 0
+9 order 22 0 0
+# A lower order than drawing 1's puts drawing 22 beneath it.
+10 order 22 0 -1
+# Back through layers 1 and 2.
+11 order 20 1 0
+12 order 21 1 0
+13 order 22 2 0
+14 order 21 3 0
+15 order 20 2 1

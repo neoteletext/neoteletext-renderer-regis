@@ -1,0 +1,13 @@
+# ANIM-10: the frame list F of drawing 40, the alternative look N of
+# drawing 10 beside its hover and pressed looks, and the paint rate T of
+# drawing 7, which is played by the ticks alone.
+2 frame 40 1
+4 frame 40 2
+6 frame 40 3
+# A frame beyond the list draws its last entry.
+8 frame 40 9
+10 frame 40 0
+10 look 10 1
+12 look 10 2
+14 look 10 3
+16 look 10 0

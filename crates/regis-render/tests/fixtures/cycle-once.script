@@ -1,0 +1,3 @@
+# ANIM-14: the same frames once, of period 2: frame 0 at ticks 1 and 2,
+# 1 at 3 and 4, 2 at 5 and 6, and 3 from tick 7, where the cycle ends.
+0 cycle 40 0 3 2 once
