@@ -60,6 +60,7 @@ Added on 18 November 2026 with the renderer's animation (REQ-6530; neoteletext-c
 | Layers (`LAYERS`) | 4 | A `G` above 3 is malformed: the commit fails with code 7 |
 | Entries in a frame list (`MAX_OBJECT_FRAMES`) | 16 | A seventeenth is malformed: the commit fails with code 7 |
 | Paint rate (`MAX_PAINT_RATE`) | 32,767, each unit 100 work units a second (`PAINT_RATE_UNIT`) | A greater rate is malformed: the commit fails with code 7 |
+| A drawing's label, `U` (`MAX_LABEL_BYTES`), and a picture's title, `D(T'...')` (`MAX_TITLE_BYTES`) | 64 bytes each, plain text | Longer, or holding a backspace, tab, line feed or carriage return: malformed, the commit fails with code 7 |
 | Drawings holding animation state (`MAX_ANIMATED_DRAWINGS`) | 64 | The state is refused |
 | Drawings cycling their frames (`MAX_CYCLING_OBJECTS`) | 16 | The cycle does nothing and is counted |
 | Pixels repainted for animation in one tick (`MAX_ANIMATION_PIXELS_PER_TICK`) | 192,000, half a picture | The painting waits for the next tick |
