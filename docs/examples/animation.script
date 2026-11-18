@@ -1,0 +1,11 @@
+# Drawing 40 is a four-frame sprite on the sprites layer (G2).
+0 cycle 40 0 3 6
+10 move 40 20 0 relative
+20 move 40 20 0 relative
+30 move 40 400 300
+30 look 40 3
+40 look 40 0
+45 order 40 3 0
+50 hide 40
+55 show 40
+58 reset 40

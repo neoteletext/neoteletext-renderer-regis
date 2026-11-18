@@ -2,7 +2,15 @@
 //!
 //! ```text
 //! regis-render [--font FILE] [--page N] [--macrograph-reports] INPUT OUTPUT.png|OUTPUT.ppm
+//! regis-render --frames TICKS [--frame-step K] [--script FILE|-] INPUT OUTPUT.png|OUTPUT.ppm
 //! ```
+//!
+//! With `--frames` the picture's animation is played for that many ticks
+//! of a sixtieth of a second and an image written every `K` ticks and at
+//! the last, each named with its tick in five digits before the
+//! extension (neoteletext-common `docs/animation.md`, ANIM-18). The
+//! script is a text file of timed operations on numbered drawings, one a
+//! line: `<tick> <operation> <drawing> ...`.
 //!
 //! The input is a terminal data stream holding device control strings
 //! (`ESC P p … ESC \`), or bare ReGIS commands. Replies the stream asks for
@@ -22,12 +30,13 @@
 mod arguments;
 mod checksum;
 mod picture;
+mod play;
 mod png;
 mod ppm;
 
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use arguments::Arguments;
@@ -91,6 +100,9 @@ fn run(arguments: &Arguments) -> Result<(), String> {
     events.extend(terminal.finish(&mut screen));
     report(&events);
 
+    if let Some(frames) = arguments.frames {
+        return play_frames(arguments, &mut terminal, &screen, frames);
+    }
     // The numbered drawings of ReGIS v2 are painted over the page on show.
     let mut composed = regis::Picture::new();
     let page = match arguments.page {
@@ -102,12 +114,78 @@ fn run(arguments: &Arguments) -> Result<(), String> {
         }
         None => screen.displayed(),
     };
+    write_image(Path::new(&arguments.output), page, &terminal)
+}
+
+/// Writes one page as the kind of image the path's extension names.
+fn write_image(path: &Path, page: &regis::Canvas, terminal: &Terminal) -> Result<(), String> {
     let picture = picture::Picture { pixels: page.pixels(), width: page.width(), height: page.height() };
     let colours = terminal.palette().colours();
-    let is_ppm =
-        Path::new(&arguments.output).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ppm"));
+    let is_ppm = path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ppm"));
     let bytes = if is_ppm { ppm::encode(&picture, &colours) } else { png::encode(&picture, &colours) };
-    fs::write(&arguments.output, bytes).map_err(|error| format!("{}: {error}", arguments.output))
+    fs::write(path, bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// The output path with `-NNNNN`, the tick in five digits, before its
+/// extension (ANIM-18).
+fn frame_path(output: &str, tick: u32) -> PathBuf {
+    let path = Path::new(output);
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let name = match path.extension() {
+        Some(extension) => format!("{stem}-{tick:05}.{}", extension.to_string_lossy()),
+        None => format!("{stem}-{tick:05}"),
+    };
+    path.with_file_name(name)
+}
+
+/// Reads the script: a file, or standard input for `-`.
+fn read_script(path: &str) -> Result<Vec<play::Timed>, String> {
+    let bytes = if path == "-" {
+        let mut bytes = Vec::new();
+        let input = std::io::stdin().lock().take(MAX_INPUT_BYTES.saturating_add(1)).read_to_end(&mut bytes);
+        input.map_err(|error| format!("standard input: {error}"))?;
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_INPUT_BYTES {
+            return Err(format!("standard input: larger than {MAX_INPUT_BYTES} bytes"));
+        }
+        bytes
+    } else {
+        read_bounded(path)?
+    };
+    let text = String::from_utf8(bytes).map_err(|_| format!("{path}: not UTF-8 text"))?;
+    play::parse(&text).map_err(|error| format!("{path}: {error}"))
+}
+
+/// Plays the picture for `frames` ticks from tick 0: at each tick the
+/// script's operations due are carried out and every cycling drawing
+/// given its frame, an image is written if the tick is one to write, and
+/// then the tick passes for the paint rate (ANIM-18). Nothing in it
+/// depends on a clock or on the machine, so a run's images are the same
+/// every time.
+fn play_frames(arguments: &Arguments, terminal: &mut Terminal, screen: &Screen, frames: u32) -> Result<(), String> {
+    let script = match &arguments.script {
+        Some(path) => read_script(path)?,
+        None => Vec::new(),
+    };
+    let mut due = script.into_iter().peekable();
+    let mut player = play::Player::default();
+    let mut composed = regis::Picture::new();
+    let mut written = 0_u32;
+    for tick in 0..=frames {
+        while let Some(timed) = due.next_if(|timed| timed.tick <= tick) {
+            player.apply(terminal, tick, timed);
+        }
+        player.tick(terminal, tick);
+        if tick.checked_rem(arguments.frame_step) == Some(0) || tick == frames {
+            terminal.compose(screen, &mut composed);
+            write_image(&frame_path(&arguments.output, tick), composed.canvas(), terminal)?;
+            written = written.saturating_add(1);
+        }
+        if tick != frames {
+            let _ = terminal.advance_ticks(1);
+        }
+    }
+    eprintln!("{written} images of {frames} ticks; {} operations did nothing", player.ignored);
+    Ok(())
 }
 
 /// Tells the user what the stream asked of the terminal.
