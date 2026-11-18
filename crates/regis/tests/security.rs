@@ -24,16 +24,65 @@ fn a_stream_of_erases_is_bounded_by_the_work_allowance() {
     assert!(started.elapsed().as_secs() < 10);
 }
 
+/// Issue 002's stream: five megabytes of screen-sized fills, 25 bytes
+/// each.
+fn screen_fills() -> Vec<u8> {
+    b"F(V[0,0][799,0][799,479])".repeat(200_000)
+}
+
 #[test]
 fn fills_after_the_allowance_is_spent_do_no_work() {
-    // Issue 002. Five megabytes of screen-sized fills, 25 bytes each: only
-    // as many are drawn as the bytes pay for, and the rest cost nothing
-    // but their parsing.
-    let stream = b"F(V[0,0][799,0][799,479])".repeat(200_000);
+    // Issue 002. Only as many fills are drawn as the bytes pay for, and
+    // the rest cost nothing but their parsing. The claim is held in work
+    // units, which are the same on every machine and in every build: the
+    // time such a stream takes is held by the test below.
+    let stream = screen_fills();
+    let mut terminal = common::terminal();
+    let mut screen = Screen::new();
+    let events = terminal.feed_regis(&mut screen, &stream);
+    assert!(events.contains(&Event::LimitReached));
+    // Everything the stream could have paid for: the allowance at the
+    // start and what each byte earns.
+    let bytes = u64::try_from(stream.len()).unwrap();
+    let allowance = regis::limits::WORK_CAP + bytes * regis::limits::WORK_PER_BYTE;
+    let spent = terminal.base_work();
+    // One fill visits each pixel of the screen twice, to mark it and to
+    // write it, and pays a little more for its edges; three visits a
+    // pixel is above that.
+    let one_fill = u64::from(regis::SCREEN_WIDTH) * u64::from(regis::SCREEN_HEIGHT) * 3;
+    println!("{bytes} bytes of fills: {spent} work units spent of {allowance} earned");
+    assert!(spent <= allowance, "{spent} work units were spent and {allowance} earned");
+    // The allowance was used as far as it went: what is left would not
+    // pay for one fill more, so the bound above is not met by drawing
+    // nothing.
+    assert!(allowance - spent < one_fill, "{} work units were left unspent", allowance - spent);
+}
+
+/// The longest the stream of fills may take in an optimised build. It
+/// took 0.48 to 0.53 seconds on the development machine (18 November
+/// 2026, eight runs under load); ten times that leaves room for a slower
+/// or busier machine and still fails long before unbounded filling
+/// would end, which is 200,000 fills of 384,000 pixels.
+const FILLS_SECONDS: u64 = 5;
+
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "timed in an optimised build, where the bound means something: cargo test --release, which scripts/check.sh full runs"
+)]
+fn the_stream_of_fills_is_read_within_its_time() {
+    // Issue 002, in time. A debug build spends 14 seconds on the 1.3
+    // thousand million work units this stream pays for, which is the
+    // price of the build and not of the stream, so no bound in seconds
+    // says anything there; the work is bounded in both builds by the
+    // test above.
+    let stream = screen_fills();
     let started = Instant::now();
     let events = events_of(&stream, false);
+    let taken = started.elapsed();
+    println!("{} bytes of fills took {taken:?}; the bound is {FILLS_SECONDS} s", stream.len());
     assert!(events.contains(&Event::LimitReached));
-    assert!(started.elapsed().as_secs() < 15, "the fills took {:?}", started.elapsed());
+    assert!(taken.as_secs() < FILLS_SECONDS, "the fills took {taken:?}");
 }
 
 #[test]
