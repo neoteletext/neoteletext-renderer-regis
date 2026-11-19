@@ -154,3 +154,24 @@ fn a_terminal_reports_what_a_validator_does_but_its_absent_screen() {
     let _ = terminal.feed_regis(&mut screen, stream.as_bytes());
     assert_eq!(validator.held_bytes() - terminal.held_bytes(), size_of::<Screen>());
 }
+
+/// TODO-6895: a reader of a picture that loads no character holds no
+/// loadable set's cells. The three sets were made at power-up in each of
+/// the stream's interpreter, the replaying interpreter and the committed
+/// tables, 9,720 bytes of every reader's 19,104, which held a server to
+/// about 1,300 connections' own ReGIS streams.
+#[test]
+fn a_new_validator_holds_no_loadable_cells_until_a_character_is_loaded() {
+    let new = Validator::new().held_bytes();
+    println!("a new validator holds {new} bytes; a validator is {} bytes itself", size_of::<Validator>());
+    assert!(new < 10_000, "{new}");
+    // One character loaded into set 1 makes that set's cells in the stream's interpreter.
+    let cells = 96 * (10 + 1);
+    let mut validator = Validator::new();
+    feed(&mut validator, "L(A1)'a'FF,F0;");
+    let loaded = validator.held_bytes();
+    assert!(loaded >= new + cells, "{loaded} after loading, {new} before");
+    // A commit copies the loaded sets into the committed tables, which hold their own.
+    feed(&mut validator, "D(B1)P[0,0]D(E)D(C)");
+    assert!(validator.held_bytes() >= loaded + cells, "{} after the commit", validator.held_bytes());
+}

@@ -104,6 +104,7 @@ impl Machine {
             self.macrographs.heap_bytes(),
             self.outbox.heap_bytes(),
             vector_bytes(&self.operations),
+            self.characters.sets.iter().map(crate::font::Loadable::heap_bytes).fold(0, usize::saturating_add),
         ]
         .into_iter()
         .fold(0, usize::saturating_add)

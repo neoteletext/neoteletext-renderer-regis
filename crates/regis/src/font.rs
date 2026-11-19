@@ -8,7 +8,7 @@ mod parse;
 use alloc::vec::Vec;
 
 pub(crate) use glyph::Glyph;
-pub(crate) use loadable::Loadable;
+pub(crate) use loadable::{Loadable, MOST_LOADABLE_HEAP_BYTES};
 
 use crate::Error;
 

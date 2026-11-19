@@ -217,6 +217,7 @@ impl Scene {
             .saturating_add(self.player.machine.characters.given_heap_bytes())
             .saturating_add(self.player.heap_bytes())
             .saturating_add(self.tables.macrographs.heap_bytes())
+            .saturating_add(self.tables.sets.iter().map(Loadable::heap_bytes).fold(0, usize::saturating_add))
     }
 
     pub(crate) const fn commits(&self) -> u32 {

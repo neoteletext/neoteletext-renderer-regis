@@ -197,7 +197,8 @@ pub(crate) const SMALL_STACK_ENTRY_BYTES: usize = 64;
 /// [`MAX_DRAWING_CONTENT_BYTES`] of contents; a definition being received;
 /// the receiver's per-drawing painting state; two interpreters (the
 /// stream's and the one that replays drawings) and a third copy of the
-/// macrographs; and the roots of the scene's maps. About 22 MB on a
+/// macrographs; the roots of the scene's maps; and three copies of the
+/// loadable character sets, once loaded. About 22 MB on a
 /// 64-bit target. A server counts each reader at
 /// [`Terminal::held_bytes`](crate::Terminal::held_bytes), or at this
 /// figure without asking (SOLVEDSECURITYISSUES 015).
@@ -206,7 +207,11 @@ pub const MAX_HELD_BYTES: usize = size_of::<crate::Validator>()
     .saturating_add(held_allocation(MAX_DRAWING_CONTENT_BYTES))
     .saturating_add(crate::scene::most_painting_state_bytes())
     .saturating_add(2 * INTERPRETER_HEAP_BYTES + MAX_MACROGRAPH_BYTES + MACROGRAPHS * ALLOCATION_OVERHEAD_BYTES)
-    .saturating_add(crate::scene::MAP_ROOTS_BYTES);
+    .saturating_add(crate::scene::MAP_ROOTS_BYTES)
+    .saturating_add(LOADABLE_COPIES * crate::machine::LOADABLE_SETS * crate::font::MOST_LOADABLE_HEAP_BYTES);
+/// The copies of the loadable sets a terminal holds: the stream's
+/// interpreter's, the replaying interpreter's and the committed tables'.
+const LOADABLE_COPIES: usize = 3;
 
 /// Drawings nested through parent and source links while painting; the
 /// figure the manual gives for macrograph nesting (chapter 9).
