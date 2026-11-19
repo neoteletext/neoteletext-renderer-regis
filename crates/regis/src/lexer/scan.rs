@@ -37,6 +37,16 @@ pub(crate) struct Lexer {
 }
 
 impl Lexer {
+    /// The memory the string or extent being read holds.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        match &self.state {
+            State::Extent(bytes) | State::Quote(_, bytes) | State::QuoteEnd(_, bytes) => {
+                crate::limits::vector_bytes(bytes)
+            }
+            State::Idle | State::Number(_) => 0,
+        }
+    }
+
     /// Whether the lexer is inside a quoted string, where `@` and `;` are text.
     pub(crate) const fn in_string(&self) -> bool {
         matches!(self.state, State::Quote(..))

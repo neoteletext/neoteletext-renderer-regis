@@ -38,6 +38,9 @@ struct Call {
     at: usize,
 }
 
+// A call is an entry of a small stack the memory bound counts.
+const _: () = assert!(size_of::<Call>() <= crate::limits::SMALL_STACK_ENTRY_BYTES);
+
 /// The macrograph state of the input.
 #[derive(Debug, Default)]
 pub(super) struct Source {
@@ -46,6 +49,15 @@ pub(super) struct Source {
 }
 
 impl Source {
+    /// The memory a definition in progress and the calls hold.
+    fn heap_bytes(&self) -> usize {
+        let body = match &self.at {
+            At::Defining { body, .. } => crate::limits::vector_bytes(body),
+            _ => 0,
+        };
+        body.saturating_add(crate::limits::vector_bytes(&self.calls))
+    }
+
     pub(super) fn reset(&mut self) {
         *self = Self::default();
     }
@@ -62,6 +74,13 @@ pub(crate) struct Interpreter {
 }
 
 impl Interpreter {
+    /// The memory its working state holds beyond its structure: the
+    /// macrographs, a definition in progress, the lexer's buffer and the
+    /// machine's, the font and provided sets aside.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.source.heap_bytes().saturating_add(self.lexer.heap_bytes()).saturating_add(self.machine.heap_bytes())
+    }
+
     pub(crate) fn new() -> Self {
         Self { source: Source::default(), lexer: Lexer::default(), machine: Machine::new() }
     }

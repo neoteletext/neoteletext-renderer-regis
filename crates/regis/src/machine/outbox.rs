@@ -29,6 +29,16 @@ impl Default for Outbox {
 }
 
 impl Outbox {
+    /// The memory the events waiting for the caller hold, with the bytes
+    /// of their replies.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        let replies = self.events.iter().map(|event| match event {
+            Event::Reply(bytes) => crate::limits::vector_bytes(bytes),
+            _ => 0,
+        });
+        crate::limits::vector_bytes(&self.events).saturating_add(replies.fold(0, usize::saturating_add))
+    }
+
     /// Credits the budgets for one byte of new input.
     pub(crate) fn earn(&mut self) {
         self.reply_budget = self.reply_budget.saturating_add(1).min(MAX_REPLY_BYTES);

@@ -26,6 +26,11 @@ pub(crate) struct Text {
     pub(crate) tilted: bool,
 }
 
+// Saved text controls and positions are entries of small stacks the memory
+// bound counts.
+const _: () = assert!(size_of::<TextControls>() <= crate::limits::SMALL_STACK_ENTRY_BYTES);
+const _: () = assert!(size_of::<Option<Point>>() <= crate::limits::SMALL_STACK_ENTRY_BYTES);
+
 /// The provided sets the caller gave, by number; one never given is `None`
 /// and draws empty cells (renderer-parity.md PAR-12).
 pub(crate) type ProvidedSets = Vec<Option<ProvidedSet>>;
@@ -63,6 +68,15 @@ impl Characters {
     }
 
     /// Gives a provided set by number, 0 to 54.
+    /// The memory the font and the provided sets the caller gave hold
+    /// beyond this structure.
+    pub(crate) fn given_heap_bytes(&self) -> usize {
+        let slots =
+            crate::limits::held_allocation(self.provided.capacity().saturating_mul(size_of::<Option<ProvidedSet>>()));
+        let sets = self.provided.iter().flatten().map(ProvidedSet::heap_bytes).fold(0, usize::saturating_add);
+        self.font.heap_bytes().saturating_add(slots).saturating_add(sets)
+    }
+
     pub(crate) fn set_provided(&mut self, number: usize, set: ProvidedSet) {
         if number >= usize::from(PROVIDED_SETS) {
             return;

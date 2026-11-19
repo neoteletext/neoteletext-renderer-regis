@@ -67,6 +67,19 @@ impl Validator {
         self.terminal.finish(&mut self.screen)
     }
 
+    /// The memory this validator holds, in bytes, at most, as
+    /// [`Terminal::held_bytes`] counts it, with its own structure: never
+    /// more than [`MAX_HELD_BYTES`] without the font and the provided sets
+    /// given to it. A server keeping a validator for each picture or
+    /// stream counts it at this figure (SOLVEDSECURITYISSUES 015).
+    ///
+    /// [`MAX_HELD_BYTES`]: crate::limits::MAX_HELD_BYTES
+    #[must_use]
+    pub fn held_bytes(&self) -> usize {
+        // The screen is absent: it holds no pixels.
+        self.terminal.held_bytes().saturating_add(size_of::<Screen>())
+    }
+
     /// The count of commits applied.
     #[must_use]
     pub fn commits(&self) -> u32 {

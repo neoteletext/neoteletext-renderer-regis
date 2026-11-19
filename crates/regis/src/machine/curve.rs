@@ -36,6 +36,13 @@ pub(crate) struct Curve {
     recent: Vec<Point>,
 }
 
+impl Curve {
+    /// The memory its points hold.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        crate::limits::vector_bytes(&self.first).saturating_add(crate::limits::vector_bytes(&self.recent))
+    }
+}
+
 impl Machine {
     pub(super) fn curve_option(&mut self, screen: &mut Screen, token: &Token) {
         match *token {

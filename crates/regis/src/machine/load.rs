@@ -89,6 +89,11 @@ impl Machine {
 }
 
 impl LoadingCell {
+    /// The memory its rows hold.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        crate::limits::vector_bytes(&self.rows)
+    }
+
     /// Ends the row in progress. A single digit is the row's right half:
     /// "ReGIS assumes the first hex value is 0".
     fn end_row(&mut self) {

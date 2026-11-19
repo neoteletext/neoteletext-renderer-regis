@@ -91,6 +91,123 @@ pub const MAX_DRAWING_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 /// Bytes of `D` operations and definitions that may wait for one commit: a
 /// whole scene sent at once is its contents and about 3.4 MB of wrappers.
 pub const MAX_STAGED_BYTES: usize = 8 * 1024 * 1024;
+/// Bytes the records of the numbered drawings of one scene may hold
+/// together, as [`DRAWING_RECORD_BYTES`] and [`DRAWING_EXTRAS_BYTES`]
+/// charge them: the same 4 MiB the contents may hold, so that a stream of
+/// drawings holds no more for their records than for their contents. A
+/// drawing whose record would pass it is not made and fails its batch with
+/// code 8 ([`CommitError::Drawings`](crate::CommitError::Drawings)). It
+/// lets about 15,000 drawings exist at once (asserted below at 12,000 or
+/// more on 64-bit targets), where a picture of the corpus uses hundreds;
+/// without it 65,535 empty drawings, 447,643 bytes of stream, held 55 MB
+/// (SOLVEDSECURITYISSUES 015).
+pub const MAX_DRAWING_RECORD_BYTES: usize = 4 * 1024 * 1024;
+/// The memory one numbered drawing's record holds in one scene, at most:
+/// the record itself, its share of the nodes of the scene's map of
+/// drawings and of its list of children, and the header of the
+/// allocation that holds its contents when it has any (their bytes count
+/// against [`MAX_DRAWING_CONTENT_BYTES`]). The committed and the staged
+/// scene each hold their own.
+pub const DRAWING_RECORD_BYTES: usize = held_allocation(size_of::<crate::scene::Drawing>())
+    .saturating_add(ordered_map_entry_bytes(size_of::<u16>(), size_of::<usize>()))
+    .saturating_add(ordered_map_entry_bytes(size_of::<(u16, u16)>(), 0))
+    .saturating_add(held_allocation(CONTENTS_HEADER_BYTES));
+/// The memory a drawing's frame list and label hold, kept apart from its
+/// record and only once one of them is given.
+pub const DRAWING_EXTRAS_BYTES: usize = held_allocation(size_of::<crate::scene::Extras>());
+/// The most numbered drawings one scene can hold at once: as many records
+/// as [`MAX_DRAWING_RECORD_BYTES`] pays for.
+pub const MOST_DRAWINGS_HELD: usize = MAX_DRAWING_RECORD_BYTES / DRAWING_RECORD_BYTES;
+
+/// What the allocator adds to one allocation, at most, beyond the bytes
+/// asked for: glibc's malloc keeps an 8-byte header and rounds a chunk up
+/// to 16 bytes (up to 23 more), and macOS's rounds to 16; 32 covers both.
+pub const ALLOCATION_OVERHEAD_BYTES: usize = 32;
+/// The counts in front of shared contents: the strong and the weak count.
+const CONTENTS_HEADER_BYTES: usize = 2 * size_of::<usize>();
+/// The entries one node of the standard library's ordered map and set
+/// holds: its B-tree has B = 6, so a node holds up to 2B - 1.
+const ORDERED_MAP_NODE_ENTRIES: usize = 11;
+/// The entries every node of those trees but the root holds at least,
+/// B - 1, which insertion and removal both keep.
+const ORDERED_MAP_LEAST_ENTRIES: usize = 5;
+
+/// The memory one allocation of `bytes` holds, at most.
+pub(crate) const fn held_allocation(bytes: usize) -> usize {
+    bytes.saturating_add(ALLOCATION_OVERHEAD_BYTES)
+}
+
+/// The memory a vector's allocation holds: none until it has room.
+pub(crate) fn vector_bytes<T>(vector: &alloc::vec::Vec<T>) -> usize {
+    match vector.capacity() {
+        0 => 0,
+        capacity => held_allocation(capacity.saturating_mul(size_of::<T>())),
+    }
+}
+
+/// The memory an ordered map with keys of `key` bytes and values of
+/// `value` bytes (a set has none) holds for each entry, at most, its root
+/// aside: a node is at most a branch node (a parent pointer, two 16-bit
+/// counts, its keys and values and one edge more than its entries), and
+/// every node but the root holds at least [`ORDERED_MAP_LEAST_ENTRIES`].
+pub(crate) const fn ordered_map_entry_bytes(key: usize, value: usize) -> usize {
+    let pointer = size_of::<usize>();
+    let entries = ORDERED_MAP_NODE_ENTRIES.saturating_mul(key.saturating_add(value));
+    let edges = ORDERED_MAP_NODE_ENTRIES.saturating_add(1).saturating_mul(pointer);
+    let node = pointer.saturating_add(size_of::<[u16; 2]>()).saturating_add(entries).saturating_add(edges);
+    held_allocation(node.next_multiple_of(pointer)).div_ceil(ORDERED_MAP_LEAST_ENTRIES)
+}
+
+/// The memory a map's root node holds when it is the only node, at most;
+/// [`ordered_map_entry_bytes`] counts every other node.
+pub(crate) const fn ordered_map_root_bytes(key: usize, value: usize) -> usize {
+    ordered_map_entry_bytes(key, value).saturating_mul(ORDERED_MAP_LEAST_ENTRIES)
+}
+
+/// The memory one interpreter's working state can hold besides its
+/// structure and its macrographs, at most: a macrograph definition in
+/// progress and the macrograph bodies grown by doubling (twice
+/// [`MAX_MACROGRAPH_BYTES`] each), a polygon fill's vertices grown by
+/// doubling, a quoted string and an extent kept by the lexer (each held
+/// twice, as read and as a token), the events and replies of one feeding
+/// call, and [`SMALL_STACK_ENTRIES`] entries of the small stacks, each
+/// entry at most [`SMALL_STACK_ENTRY_BYTES`].
+pub const INTERPRETER_HEAP_BYTES: usize = (4 * MAX_MACROGRAPH_BYTES + MACROGRAPHS * ALLOCATION_OVERHEAD_BYTES)
+    .saturating_add(held_allocation(2 * MAX_FILL_VERTICES * size_of::<crate::geometry::Point>()))
+    .saturating_add(2 * held_allocation(2 * MAX_STRING_BYTES))
+    .saturating_add(2 * held_allocation(2 * MAX_EXTENT_BYTES))
+    .saturating_add(held_allocation(MAX_EVENTS * size_of::<crate::Event>()))
+    .saturating_add(MAX_REPLY_BYTES.saturating_add(MAX_EVENTS * ALLOCATION_OVERHEAD_BYTES))
+    .saturating_add(SMALL_STACK_ENTRIES * held_allocation(SMALL_STACK_ENTRY_BYTES));
+/// Entries of the small stacks an interpreter keeps: saved positions, saved
+/// text controls, open parentheses, macrograph calls and a curve's points
+/// (each in its own vector).
+const SMALL_STACK_ENTRIES: usize =
+    MAX_POSITION_STACK + MAX_TEXT_STACK + MAX_NESTING + MAX_MACROGRAPH_DEPTH + 2 * CURVE_WINDOW + 16;
+/// The largest entry of those stacks, asserted against each entry type
+/// where the type is defined.
+pub(crate) const SMALL_STACK_ENTRY_BYTES: usize = 64;
+
+/// The memory a [`Terminal`](crate::Terminal) or a
+/// [`Validator`](crate::Validator) holds, at most, besides the font and
+/// the provided sets its caller gives it (which
+/// [`Terminal::held_bytes`](crate::Terminal::held_bytes) counts as given):
+/// its own structure; the committed and the staged scene, each with
+/// [`MAX_DRAWING_RECORD_BYTES`] of records and
+/// [`MAX_DRAWING_CONTENT_BYTES`] of contents; a definition being received;
+/// the receiver's per-drawing painting state; two interpreters (the
+/// stream's and the one that replays drawings) and a third copy of the
+/// macrographs; and the roots of the scene's maps. About 22 MB on a
+/// 64-bit target. A server counts each reader at
+/// [`Terminal::held_bytes`](crate::Terminal::held_bytes), or at this
+/// figure without asking (SOLVEDSECURITYISSUES 015).
+pub const MAX_HELD_BYTES: usize = size_of::<crate::Validator>()
+    .saturating_add(2 * (MAX_DRAWING_RECORD_BYTES + MAX_DRAWING_CONTENT_BYTES))
+    .saturating_add(held_allocation(MAX_DRAWING_CONTENT_BYTES))
+    .saturating_add(crate::scene::most_painting_state_bytes())
+    .saturating_add(2 * INTERPRETER_HEAP_BYTES + MAX_MACROGRAPH_BYTES + MACROGRAPHS * ALLOCATION_OVERHEAD_BYTES)
+    .saturating_add(crate::scene::MAP_ROOTS_BYTES);
+
 /// Drawings nested through parent and source links while painting; the
 /// figure the manual gives for macrograph nesting (chapter 9).
 pub const MAX_DRAWING_DEPTH: usize = 16;
@@ -191,6 +308,13 @@ pub const MAX_DCS_PARAMETER: u32 = 9999;
 /// Bytes of report replies that can be saved up; one more is earned for
 /// each byte fed, so replies never outweigh the input by more than this.
 pub const MAX_REPLY_BYTES: usize = 4096;
+// The cap on records lets a scene hold many more drawings than a picture
+// of the corpus uses.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(MOST_DRAWINGS_HELD >= 12_000);
+// The two scene caps are the same figure, as their documents say.
+const _: () = assert!(MAX_DRAWING_RECORD_BYTES == MAX_DRAWING_CONTENT_BYTES);
+
 /// Ticks of delay that can be saved up (one minute); one more is earned
 /// for each byte fed.
 pub const MAX_SAVED_WAIT_TICKS: u32 = 3600;

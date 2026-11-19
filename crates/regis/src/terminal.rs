@@ -12,7 +12,7 @@ use crate::font::Font;
 use crate::limits::PROVIDED_SETS;
 use crate::palette::Palette;
 use crate::provided::ProvidedSet;
-use crate::scene::{AnimationState, CommittedDrawing, Picture, Rectangle, Scene, ViewerState};
+use crate::scene::{AnimationState, CommittedDrawing, MAP_ROOTS_BYTES, Picture, Rectangle, Scene, ViewerState};
 use crate::surface::Screen;
 pub(crate) use source::Interpreter;
 use stream::{Step, Stream};
@@ -125,6 +125,27 @@ impl Terminal {
     #[must_use]
     pub const fn base_work(&self) -> u64 {
         self.base.machine.work.spent()
+    }
+
+    /// The memory this terminal holds, in bytes, at most: its own
+    /// structure, the numbered drawings of the committed and the staged
+    /// scene with their contents, a definition being received, the
+    /// receiver's painting state, the working state of its two
+    /// interpreters, and the font and provided sets given to it (each kept
+    /// twice). A server that keeps many terminals or validators counts
+    /// each at this figure. Without the font and the provided sets it is
+    /// never more than [`MAX_HELD_BYTES`]; a commit's checks hold more for
+    /// the time they run, in proportion to the drawings
+    /// (SOLVEDSECURITYISSUES 015).
+    ///
+    /// [`MAX_HELD_BYTES`]: crate::limits::MAX_HELD_BYTES
+    #[must_use]
+    pub fn held_bytes(&self) -> usize {
+        size_of::<Self>()
+            .saturating_add(self.scene.held_bytes())
+            .saturating_add(self.base.machine.characters.given_heap_bytes())
+            .saturating_add(self.base.heap_bytes())
+            .saturating_add(MAP_ROOTS_BYTES)
     }
 
     /// The count of ReGIS v2 commits applied; it wraps to 0.

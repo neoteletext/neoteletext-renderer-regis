@@ -21,10 +21,14 @@ pub use animation::{AnimationState, CommittedDrawing, ForcedLook, Rectangle};
 use capture::{Capture, Captured};
 pub use picture::{Pick, Picture};
 use stage::Stage;
+pub(crate) use stage::{Drawing, Extras};
 
 use crate::event::{CommitError, Event};
 use crate::font::{Font, Loadable};
-use crate::limits::{MAX_DRAWING_CONTENT_BYTES, MAX_STAGED_BYTES};
+use crate::limits::{
+    MAX_ANIMATED_DRAWINGS, MAX_DRAWING_CONTENT_BYTES, MAX_STAGED_BYTES, MOST_DRAWINGS_HELD, held_allocation,
+    ordered_map_entry_bytes, ordered_map_root_bytes,
+};
 use crate::machine::{LOADABLE_SETS, Machine, Operation, Role};
 use crate::macrograph::Macrographs;
 use crate::palette::Palette;
@@ -62,6 +66,31 @@ pub struct ViewerState {
     /// receiver blinks a cursor the stream drew.
     pub hidden: u16,
 }
+
+/// The memory one drawing's entry holds in the receiver's record of the
+/// drawings being painted gradually and of those whose painting is to
+/// start.
+const PAINTING_ENTRY_BYTES: usize = ordered_map_entry_bytes(size_of::<u16>(), size_of::<u64>())
+    .saturating_add(ordered_map_entry_bytes(size_of::<u16>(), 0));
+/// The memory one animated drawing's entry holds in the animation state
+/// and in an open batch's record of what it wrote over.
+const ANIMATED_ENTRY_BYTES: usize = ordered_map_entry_bytes(size_of::<u16>(), size_of::<AnimationState>())
+    .saturating_add(ordered_map_entry_bytes(size_of::<u16>(), size_of::<Written>()));
+
+/// The most the receiver's per-drawing painting state can hold: every
+/// drawing a scene can hold being painted, and every animated drawing.
+pub(crate) const fn most_painting_state_bytes() -> usize {
+    MOST_DRAWINGS_HELD
+        .saturating_mul(PAINTING_ENTRY_BYTES)
+        .saturating_add(MAX_ANIMATED_DRAWINGS.saturating_mul(ANIMATED_ENTRY_BYTES))
+}
+
+/// The roots of the scene's maps, which [`ordered_map_entry_bytes`] does
+/// not count: two for each scene, four for the painting and animation
+/// state, two for a commit's checks, and the empty contents each scene
+/// shares, each at most the root of the largest map.
+pub(crate) const MAP_ROOTS_BYTES: usize = 12 * ordered_map_root_bytes(size_of::<u16>(), size_of::<AnimationState>())
+    + 2 * held_allocation(2 * size_of::<usize>());
 
 /// The operations waiting for a commit.
 #[derive(Debug)]
@@ -138,7 +167,7 @@ impl Scene {
     pub(crate) fn set_viewer_state(&mut self, state: ViewerState) -> bool {
         let old = core::mem::replace(&mut self.viewer, state);
         let exists = |number: u16| number != 0 && self.committed.get(number).is_some();
-        let look = |number: u16, pick: fn(&stage::Drawing) -> u16| {
+        let look = |number: u16, pick: fn(&Drawing) -> u16| {
             self.committed.get(number).is_some_and(|drawing| exists(pick(drawing)))
         };
         let hover = |number: u16| look(number, |drawing| drawing.hover);
@@ -165,6 +194,29 @@ impl Scene {
         self.committed.forget_measurements();
         self.staged.forget_measurements();
         self.tables_version = self.tables_version.wrapping_add(1);
+    }
+
+    /// The memory the scene holds for what the stream defined, at most:
+    /// the committed scene, what the staged scene does not share with it,
+    /// a definition being received, the receiver's painting and animation
+    /// state, the replaying interpreter's working state with the font and
+    /// provided sets it was given, and the committed copy of the
+    /// macrographs (SOLVEDSECURITYISSUES 015). Its structure and the maps'
+    /// roots are the caller's to count.
+    pub(crate) fn held_bytes(&self) -> usize {
+        let painting = self.painting.len().saturating_add(self.starting.len()).saturating_mul(PAINTING_ENTRY_BYTES);
+        let written = self.batch.as_ref().map_or(0, |batch| batch.written.len());
+        let animated = self.animation.len().saturating_add(written).saturating_mul(ANIMATED_ENTRY_BYTES);
+        let capture = self.capture.as_ref().map_or(0, |capture| held_allocation(capture.held_bytes()));
+        self.committed
+            .held_bytes()
+            .saturating_add(self.staged.held_apart_from(&self.committed))
+            .saturating_add(capture)
+            .saturating_add(painting)
+            .saturating_add(animated)
+            .saturating_add(self.player.machine.characters.given_heap_bytes())
+            .saturating_add(self.player.heap_bytes())
+            .saturating_add(self.tables.macrographs.heap_bytes())
     }
 
     pub(crate) const fn commits(&self) -> u32 {
@@ -218,11 +270,15 @@ impl Scene {
             }
             // `D(E)` with no definition open.
             Operation::End => self.fail(base, CommitError::Malformed, 0),
-            Operation::Create(drawing) => self.staged.create(drawing),
-            Operation::Set(drawing, attribute) => {
-                self.staged.set(drawing, attribute);
-                self.note_written(drawing, attribute);
+            Operation::Create(drawing) => {
+                if let Err(error) = self.staged.create(drawing) {
+                    self.fail(base, error, drawing);
+                }
             }
+            Operation::Set(drawing, attribute) => match self.staged.set(drawing, attribute) {
+                Ok(()) => self.note_written(drawing, attribute),
+                Err(error) => self.fail(base, error, drawing),
+            },
             Operation::Delete(drawing) => {
                 self.staged.delete(drawing);
                 self.note_deleted();
@@ -260,9 +316,9 @@ impl Scene {
             batch.failure.get_or_insert((CommitError::Malformed, target.unwrap_or(0)));
         }
         let Some(target) = target else { return };
-        let stored = contents.and_then(|contents| self.staged.define(target, contents));
-        if stored.is_none() {
-            batch.failure.get_or_insert((CommitError::Contents, target));
+        let stored = contents.map_or(Err(CommitError::Contents), |contents| self.staged.define(target, contents));
+        if let Err(error) = stored {
+            batch.failure.get_or_insert((error, target));
         }
     }
 

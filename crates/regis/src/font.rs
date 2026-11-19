@@ -34,6 +34,11 @@ pub(crate) struct Strike {
 }
 
 impl Strike {
+    /// The memory its rows hold.
+    fn heap_bytes(&self) -> usize {
+        crate::limits::held_allocation(self.rows.capacity())
+    }
+
     fn new(height: usize) -> Self {
         Self { height, rows: alloc::vec![0; CODES.saturating_mul(height)], present: [false; CODES] }
     }
@@ -76,6 +81,11 @@ pub struct Font {
 }
 
 impl Font {
+    /// The memory its strikes hold beyond its structure.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        [&self.short, &self.tall].into_iter().flatten().map(Strike::heap_bytes).fold(0, usize::saturating_add)
+    }
+
     /// Reads a font from its text form.
     ///
     /// Lines are a `#` comment, a blank, a strike header `[strike 10]` or

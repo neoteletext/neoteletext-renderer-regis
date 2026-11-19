@@ -19,6 +19,11 @@ pub(crate) struct Fill {
 }
 
 impl Fill {
+    /// The memory the corners hold.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        crate::limits::vector_bytes(&self.vertices)
+    }
+
     /// Adds a corner. Consecutive corners on the same pixel "count as one
     /// vertex"; corners beyond the limit are ignored.
     pub(crate) fn vertex(&mut self, point: Point) {

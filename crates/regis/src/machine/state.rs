@@ -90,6 +90,25 @@ pub(crate) struct Machine {
 }
 
 impl Machine {
+    /// The memory its working state holds beyond its structure, the font
+    /// and provided sets aside.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::limits::vector_bytes;
+        [
+            vector_bytes(&self.stack),
+            vector_bytes(&self.text.saved),
+            self.characters.cell.as_ref().map_or(0, super::load::LoadingCell::heap_bytes),
+            self.curve.as_ref().map_or(0, Curve::heap_bytes),
+            self.fill.as_ref().map_or(0, Fill::heap_bytes),
+            self.syntax.heap_bytes(),
+            self.macrographs.heap_bytes(),
+            self.outbox.heap_bytes(),
+            vector_bytes(&self.operations),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
+    }
+
     /// The state at power-up (manual chapter 1, table 1-2).
     pub(crate) fn new() -> Self {
         Self {

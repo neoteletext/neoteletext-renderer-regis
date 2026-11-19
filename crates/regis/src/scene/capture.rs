@@ -47,6 +47,10 @@ enum Load {
     Cell,
 }
 
+/// The bytes a definition's store first takes room for: a short drawing's
+/// contents, so that it grows a few times and not at every byte.
+const FIRST_CAPTURE_BYTES: usize = 64;
+
 /// A definition being received.
 #[derive(Debug)]
 pub(super) struct Capture {
@@ -97,10 +101,22 @@ impl Capture {
         self.target
     }
 
+    /// The memory its kept bytes hold.
+    pub(super) const fn held_bytes(&self) -> usize {
+        self.bytes.capacity()
+    }
+
     /// Takes one byte; the definition, once its `D(E)` has been read.
     pub(super) fn push(&mut self, byte: u8) -> Option<Captured> {
         let index = self.bytes.len();
         if index < Scene::contents_cap() && self.target.is_some() {
+            if index == self.bytes.capacity() {
+                // Grown as a vector grows, doubling, but never past the
+                // cap: what a definition holds is at most the cap
+                // (SOLVEDSECURITYISSUES 015).
+                let more = index.max(FIRST_CAPTURE_BYTES).min(Scene::contents_cap().saturating_sub(index));
+                self.bytes.reserve_exact(more);
+            }
             self.bytes.push(byte);
         } else if self.target.is_some() {
             self.overflowed = true;

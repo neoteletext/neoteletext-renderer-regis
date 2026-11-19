@@ -53,10 +53,14 @@ pub enum CommitError {
     Work,
     /// A `D` operation was malformed.
     Malformed,
+    /// The drawings' records together passed
+    /// [`MAX_DRAWING_RECORD_BYTES`](crate::limits::MAX_DRAWING_RECORD_BYTES):
+    /// too many drawings exist at once (SOLVEDSECURITYISSUES 015).
+    Drawings,
 }
 
 impl CommitError {
-    /// The failure's code, 1 to 7.
+    /// The failure's code, 1 to 8.
     #[must_use]
     pub const fn code(self) -> u8 {
         match self {
@@ -67,6 +71,7 @@ impl CommitError {
             Self::Parent => 5,
             Self::Work => 6,
             Self::Malformed => 7,
+            Self::Drawings => 8,
         }
     }
 }

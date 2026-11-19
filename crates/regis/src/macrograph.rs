@@ -16,6 +16,11 @@ pub(crate) fn slot(letter: u8) -> Option<usize> {
 }
 
 impl Macrographs {
+    /// The memory the bodies hold.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.bodies.iter().map(crate::limits::vector_bytes).fold(0, usize::saturating_add)
+    }
+
     /// The stored bytes of a macrograph; empty if never defined.
     pub(crate) fn body(&self, slot: usize) -> &[u8] {
         self.bodies.get(slot).map_or(&[], Vec::as_slice)

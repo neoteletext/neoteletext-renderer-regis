@@ -570,7 +570,7 @@ impl Walk<'_> {
         existing(forced)
             .or_else(|| pointed(self.viewer.pressed, drawing.pressed))
             .or_else(|| pointed(self.viewer.hovered, drawing.hover))
-            .or_else(|| drawing.frames.entry(state.frame))
+            .or_else(|| drawing.frames().entry(state.frame))
             .unwrap_or(drawing.source)
     }
 

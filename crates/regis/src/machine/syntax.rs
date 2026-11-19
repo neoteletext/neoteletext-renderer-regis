@@ -16,7 +16,15 @@ pub(crate) struct Syntax {
     overflow: usize,
 }
 
+// A parenthesis open is an entry of a small stack the memory bound counts.
+const _: () = assert!(size_of::<Frame>() <= crate::limits::SMALL_STACK_ENTRY_BYTES);
+
 impl Syntax {
+    /// The memory the open parentheses hold.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        crate::limits::vector_bytes(&self.frames)
+    }
+
     /// The innermost open parenthesis's context.
     pub(crate) fn context(&self) -> Option<Context> {
         self.frames.last().map(|frame| frame.context)

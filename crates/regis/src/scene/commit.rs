@@ -30,7 +30,8 @@ fn nested(stage: &Stage, number: u16) -> Vec<u16> {
     let mut nested = stage.children(number);
     if let Some(drawing) = stage.get(number) {
         let named = [drawing.source, drawing.hover, drawing.pressed, drawing.alternative];
-        let named = named.into_iter().chain(drawing.frames.entries().iter().copied());
+        let frames = drawing.frames();
+        let named = named.into_iter().chain(frames.entries().iter().copied());
         nested.extend(named.filter(|other| stage.get(*other).is_some()));
     }
     nested
@@ -101,6 +102,9 @@ impl Scene {
                     self.tables_version = self.tables_version.wrapping_add(1);
                 }
                 self.tables = tables;
+                // The old scene goes before the copy is made, so that no
+                // more than two are ever held (SOLVEDSECURITYISSUES 015).
+                self.committed = Stage::default();
                 self.committed = self.staged.clone();
                 self.commits = self.commits.wrapping_add(1);
                 let written = batch.map(|batch| batch.written).unwrap_or_default();
@@ -111,6 +115,7 @@ impl Scene {
                 // Nothing changes: the staged scene goes back to what is
                 // on show, the player to the committed tables, and a
                 // change to the output map made in the batch is dropped.
+                self.staged = Stage::default();
                 self.staged = self.committed.clone();
                 self.load_tables();
                 if let Some(batch) = batch {
@@ -198,7 +203,7 @@ impl Scene {
         }
         let Some(depth) = depth.checked_sub(1) else { return Err((CommitError::Depth, number)) };
         let Some(drawing) = self.staged.get(number) else { return Ok(0) };
-        let (source, frames) = (drawing.source, drawing.frames);
+        let (source, frames) = (drawing.source, drawing.frames());
         let looks = [drawing.hover, drawing.pressed, drawing.alternative];
         let mut shown = match source {
             0 => self.contents_work(number)?,

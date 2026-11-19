@@ -1,6 +1,6 @@
 //! One state of the scene: the numbered drawings and their attributes.
 
-use alloc::collections::btree_map::Entry;
+use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 // Contents are shared between the committed and the staged scene. Where
 // the target has atomics the sharing is thread-safe, so that a terminal
@@ -13,7 +13,8 @@ use alloc::sync::Arc as Shared;
 use alloc::vec::Vec;
 
 use super::Scene;
-use crate::limits::DEFAULT_LAYER;
+use crate::event::CommitError;
+use crate::limits::{DEFAULT_LAYER, DRAWING_EXTRAS_BYTES, DRAWING_RECORD_BYTES, MAX_DRAWING_RECORD_BYTES};
 use crate::machine::{Attribute, Clip, Frames, Line};
 use crate::surface::Bounds;
 
@@ -33,7 +34,7 @@ pub(super) struct Measured {
 
 /// A numbered drawing (`docs/regis-v2.md`, "Attributes").
 #[derive(Clone, Debug)]
-pub(super) struct Drawing {
+pub(crate) struct Drawing {
     /// The ReGIS commands it holds, as received.
     pub(super) contents: Contents,
     /// What its contents take to paint, once measured.
@@ -59,20 +60,44 @@ pub(super) struct Drawing {
     /// The drawing painted in its place while the alternative look is
     /// forced, 0 for none (ANIM-10).
     pub(super) alternative: u16,
-    /// The drawings of which the one the frame in force names is painted
-    /// in its place (ANIM-10).
-    pub(super) frames: Frames,
     /// The paint rate, 0 for at once (DEC-6382; ANIM-15).
     pub(super) rate: u16,
-    /// The label a screen reader speaks for it, `U`; never drawn
-    /// (DEC-6638 item 6).
-    pub(super) label: Line,
+    /// Its frame list and label, kept apart and only once one is given:
+    /// together they are larger than the rest of the record, and most
+    /// drawings have neither (SOLVEDSECURITYISSUES 015).
+    extras: Option<Box<Extras>>,
 }
 
-impl Default for Drawing {
-    fn default() -> Self {
+/// The attributes of a drawing too large to keep in every record.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Extras {
+    /// The drawings of which the one the frame in force names is painted
+    /// in its place (ANIM-10).
+    frames: Frames,
+    /// The label a screen reader speaks for it, `U`; never drawn
+    /// (DEC-6638 item 6).
+    label: Line,
+}
+
+impl Drawing {
+    /// Its frame list; empty when it has none.
+    pub(super) fn frames(&self) -> Frames {
+        self.extras.as_ref().map(|extras| extras.frames).unwrap_or_default()
+    }
+
+    /// Its label; `None` when it has none.
+    pub(super) fn label(&self) -> Option<&Line> {
+        self.extras.as_ref().map(|extras| &extras.label)
+    }
+}
+
+impl Drawing {
+    /// A drawing with default attributes and the contents given, which are
+    /// a stage's one empty contents: an empty drawing allocates nothing
+    /// for them.
+    fn new(contents: Contents) -> Self {
         Self {
-            contents: Shared::from([]),
+            contents,
             measured: None,
             x: 0,
             y: 0,
@@ -86,24 +111,44 @@ impl Default for Drawing {
             clip: None,
             layer: DEFAULT_LAYER,
             alternative: 0,
-            frames: Frames::default(),
             rate: 0,
-            label: Line::default(),
+            extras: None,
         }
     }
 }
 
 /// The numbered drawings at one moment. Copying it copies no contents.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(super) struct Stage {
-    drawings: BTreeMap<u16, Drawing>,
+    /// Each record is boxed, so that a node of the map holds numbers and
+    /// pointers and not eleven whole records, most of a node empty.
+    drawings: BTreeMap<u16, Box<Drawing>>,
     /// Every (parent, child) pair, top-level drawings under parent 0, so a
     /// drawing's children are found without looking at every drawing.
     children: BTreeSet<(u16, u16)>,
     /// Bytes of contents held.
     bytes: usize,
+    /// The memory the records hold, as [`DRAWING_RECORD_BYTES`] and
+    /// [`DRAWING_EXTRAS_BYTES`] charge it; held to
+    /// [`MAX_DRAWING_RECORD_BYTES`] (SOLVEDSECURITYISSUES 015).
+    records: usize,
+    /// The contents of every drawing that has none: one allocation shared.
+    empty: Contents,
     /// The picture's title, `D(T'...')`; never drawn (DEC-6638 item 3).
     pub(super) title: Line,
+}
+
+impl Default for Stage {
+    fn default() -> Self {
+        Self {
+            drawings: BTreeMap::new(),
+            children: BTreeSet::new(),
+            bytes: 0,
+            records: 0,
+            empty: Shared::from([]),
+            title: Line::default(),
+        }
+    }
 }
 
 impl Stage {
@@ -112,11 +157,11 @@ impl Stage {
     }
 
     pub(super) fn get(&self, drawing: u16) -> Option<&Drawing> {
-        self.drawings.get(&drawing)
+        self.drawings.get(&drawing).map(|drawing| &**drawing)
     }
 
     pub(super) fn get_mut(&mut self, drawing: u16) -> Option<&mut Drawing> {
-        self.drawings.get_mut(&drawing)
+        self.drawings.get_mut(&drawing).map(|drawing| &mut **drawing)
     }
 
     pub(super) fn numbers(&self) -> impl Iterator<Item = u16> + '_ {
@@ -124,7 +169,31 @@ impl Stage {
     }
 
     pub(super) fn drawings(&self) -> impl Iterator<Item = (u16, &Drawing)> + '_ {
-        self.drawings.iter().map(|(number, drawing)| (*number, drawing))
+        self.drawings.iter().map(|(number, drawing)| (*number, &**drawing))
+    }
+
+    /// The memory it holds: its records as charged and its contents.
+    pub(super) const fn held_bytes(&self) -> usize {
+        self.records.saturating_add(self.bytes)
+    }
+
+    /// The memory it holds that `other` does not share: its records, and
+    /// the contents of each drawing that are not the very contents `other`
+    /// holds for the same number (a commit copies the staged scene without
+    /// copying contents).
+    pub(super) fn held_apart_from(&self, other: &Self) -> usize {
+        let mut theirs = other.drawings.iter().peekable();
+        let mut unshared = 0_usize;
+        for (number, drawing) in &self.drawings {
+            while theirs.next_if(|(their_number, _)| *their_number < number).is_some() {}
+            let shared = theirs.peek().is_some_and(|(their_number, theirs)| {
+                *their_number == number && Contents::ptr_eq(&theirs.contents, &drawing.contents)
+            });
+            if !shared {
+                unshared = unshared.saturating_add(drawing.contents.len());
+            }
+        }
+        self.records.saturating_add(unshared)
     }
 
     /// Forgets every measurement: the shared tables or the font changed.
@@ -152,18 +221,39 @@ impl Stage {
         children.into_iter().map(|(_, child)| child).collect()
     }
 
-    /// `B` or `S` on an unused number makes the drawing, with default
-    /// attributes.
-    pub(super) fn create(&mut self, number: u16) {
-        if let Entry::Vacant(vacant) = self.drawings.entry(number) {
-            vacant.insert(Drawing::default());
-            self.children.insert((0, number));
+    /// Charges `bytes` more of records, if the cap allows.
+    fn charge(&mut self, bytes: usize) -> Result<(), CommitError> {
+        let records = self.records.saturating_add(bytes);
+        if records > MAX_DRAWING_RECORD_BYTES {
+            return Err(CommitError::Drawings);
         }
+        self.records = records;
+        Ok(())
     }
 
-    pub(super) fn set(&mut self, number: u16, attribute: Attribute) {
-        self.create(number);
-        let Some(drawing) = self.drawings.get_mut(&number) else { return };
+    /// `B` or `S` on an unused number makes the drawing, with default
+    /// attributes. Refused, and nothing made, when its record would take
+    /// the records past [`MAX_DRAWING_RECORD_BYTES`].
+    pub(super) fn create(&mut self, number: u16) -> Result<(), CommitError> {
+        if self.drawings.contains_key(&number) {
+            return Ok(());
+        }
+        self.charge(DRAWING_RECORD_BYTES)?;
+        self.drawings.insert(number, Box::new(Drawing::new(self.empty.clone())));
+        self.children.insert((0, number));
+        Ok(())
+    }
+
+    /// Sets an attribute, making the drawing first if need be. Refused,
+    /// with nothing changed, when the records would pass their cap.
+    pub(super) fn set(&mut self, number: u16, attribute: Attribute) -> Result<(), CommitError> {
+        self.create(number)?;
+        let had_extras = self.get(number).is_some_and(|drawing| drawing.extras.is_some());
+        let wants_extras = matches!(attribute, Attribute::Frames(_) | Attribute::Label(_));
+        if wants_extras && !had_extras {
+            self.charge(DRAWING_EXTRAS_BYTES)?;
+        }
+        let Some(drawing) = self.drawings.get_mut(&number) else { return Ok(()) };
         match attribute {
             Attribute::X(x) => drawing.x = x,
             Attribute::Y(y) => drawing.y = y,
@@ -176,31 +266,40 @@ impl Stage {
             Attribute::Clip(clip) => drawing.clip = clip,
             Attribute::Layer(layer) => drawing.layer = layer,
             Attribute::Alternative(alternative) => drawing.alternative = alternative,
-            Attribute::Frames(frames) => drawing.frames = frames,
+            Attribute::Frames(frames) => drawing.extras.get_or_insert_default().frames = frames,
             Attribute::Rate(rate) => drawing.rate = rate,
-            Attribute::Label(label) => drawing.label = label,
+            Attribute::Label(label) => drawing.extras.get_or_insert_default().label = label,
             Attribute::Parent(parent) => {
                 let old = core::mem::replace(&mut drawing.parent, parent);
                 self.children.remove(&(old, number));
                 self.children.insert((parent, number));
             }
         }
+        // A frame list and a label both removed give the memory back.
+        if let Some(drawing) = self.drawings.get_mut(&number)
+            && drawing.extras.as_deref().is_some_and(|extras| *extras == Extras::default())
+        {
+            drawing.extras = None;
+            self.records = self.records.saturating_sub(DRAWING_EXTRAS_BYTES);
+        }
+        Ok(())
     }
 
     /// Replaces a drawing's contents, keeping its attributes and children.
-    /// `None`, and nothing stored, if the contents of all drawings would
-    /// then pass the cap.
-    pub(super) fn define(&mut self, number: u16, contents: Vec<u8>) -> Option<()> {
-        self.create(number);
-        let drawing = self.drawings.get_mut(&number)?;
+    /// Refused, and nothing stored, if the contents of all drawings would
+    /// then pass their cap ([`CommitError::Contents`]) or the drawing's
+    /// record the records' ([`CommitError::Drawings`]).
+    pub(super) fn define(&mut self, number: u16, contents: Vec<u8>) -> Result<(), CommitError> {
+        self.create(number)?;
+        let drawing = self.drawings.get_mut(&number).ok_or(CommitError::Contents)?;
         let bytes = self.bytes.saturating_sub(drawing.contents.len()).saturating_add(contents.len());
         if bytes > Scene::contents_cap() {
-            return None;
+            return Err(CommitError::Contents);
         }
         self.bytes = bytes;
-        drawing.contents = Shared::from(contents);
+        drawing.contents = if contents.is_empty() { self.empty.clone() } else { Shared::from(contents) };
         drawing.measured = None;
-        Some(())
+        Ok(())
     }
 
     /// Removes a drawing and its children, and theirs. A number that does
@@ -212,6 +311,8 @@ impl Stage {
             // that name each other in a ring end the walk.
             let Some(drawing) = self.drawings.remove(&next) else { continue };
             self.bytes = self.bytes.saturating_sub(drawing.contents.len());
+            let extras = if drawing.extras.is_some() { DRAWING_EXTRAS_BYTES } else { 0 };
+            self.records = self.records.saturating_sub(DRAWING_RECORD_BYTES.saturating_add(extras));
             self.children.remove(&(drawing.parent, next));
             doomed.extend(self.children.range((next, u16::MIN)..=(next, u16::MAX)).map(|(_, child)| *child));
         }

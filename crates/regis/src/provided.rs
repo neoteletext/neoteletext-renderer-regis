@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 
 use crate::Error;
 use crate::font::Glyph;
-use crate::limits::{MAX_PROVIDED_GLYPH_HEIGHT, MAX_PROVIDED_GLYPH_WIDTH, PROVIDED_SET_POSITIONS};
+use crate::limits::{MAX_PROVIDED_GLYPH_HEIGHT, MAX_PROVIDED_GLYPH_WIDTH, PROVIDED_SET_POSITIONS, held_allocation};
 pub(crate) use joining::forms;
 
 /// The first code of a set: 2/0.
@@ -103,6 +103,12 @@ pub struct ProvidedSet {
 }
 
 impl ProvidedSet {
+    /// The memory its glyphs and joining data hold beyond its structure.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        let rows = |rows: &Vec<u16>| held_allocation(rows.capacity().saturating_mul(size_of::<u16>()));
+        rows(&self.rows).saturating_add(self.joining.as_ref().map_or(0, |joining| rows(&joining.rows)))
+    }
+
     /// A set of blank glyphs.
     ///
     /// # Errors
