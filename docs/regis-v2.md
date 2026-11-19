@@ -406,6 +406,7 @@ A failed commit cannot happen when the sender works correctly, because a sender 
 | 5 | Parent does not exist | The drawing naming it |
 | 6 | Rendering work cap exceeded | 0 |
 | 7 | Malformed `D` operation | The drawing concerned, or 0 |
+| 8 | Drawings' records cap exceeded | The drawing that would have been made |
 
 ## Lifetime and memory
 
@@ -427,8 +428,8 @@ There is no garbage collection. Lifetimes are explicit and memory is bounded by 
 
 **Bounds**
 
-- Five caps: number of drawings, total bytes of stored contents, bytes of staged operations awaiting commit, chain depth, and rendering work per repaint. A commit that would exceed a cap is rejected whole and the failure reported to the caller.
-- No pixels are kept per drawing. The renderer holds contents as text plus fixed-size bitmaps (base pages, screen, pick record), the staged batch, an off-screen frame and the committed table copy. Its memory is bounded by the contents cap, the staged cap and a constant.
+- Six caps: number of drawings, total bytes of stored contents, total bytes of the drawings' records, bytes of staged operations awaiting commit, chain depth, and rendering work per repaint. A commit that would exceed a cap is rejected whole and the failure reported to the caller.
+- No pixels are kept per drawing. The renderer holds contents as text plus fixed-size bitmaps (base pages, screen, pick record), the staged batch, an off-screen frame and the committed table copy. Its memory is bounded by the contents cap and the records cap, each held at most twice (the committed and the staged scene), and a constant: `MAX_HELD_BYTES` in `regis::limits`, about 22 MB on a 64-bit target, besides the font and provided sets the caller gives. `Terminal::held_bytes` and `Validator::held_bytes` report what one holds, as an upper bound, for a caller that keeps many to count.
 - An application that creates and never deletes reaches the cap and its commits are rejected. It cannot harm the renderer.
 
 Starting values, to be confirmed by measurement. They are derived from the platform proposal's figures: paintings of 30 to 150 KB, and a full repaint of a 53 to 88 KB painting in 27 to 53 ms (roughly 0.5 to 0.6 ms per KB).
@@ -436,6 +437,7 @@ Starting values, to be confirmed by measurement. They are derived from the platf
 | Cap | Value | Reasoning |
 | --- | --- | --- |
 | Drawings | 65,535 | Fixed by the number range |
+| Drawings' records | 4 MB, each drawing charged the memory its record holds (273 bytes on a 64-bit target, 144 more once it has a label or a frame list): about 15,000 drawings at once | What a drawing holds besides its contents is held to the figure the contents are, so that a stream of empty drawings holds no more than a stream of contents could. Without it, 65,535 empty drawings, 447,643 bytes of stream, held 55 MB (`SOLVEDSECURITYISSUES/015`). Added 19 November 2026 |
 | Stored contents | 4 MB | About 25 times the largest measured painting |
 | Staged operations | 8 MB | Sending a whole scene at once is one commit holding: the contents plus up to about 3.4 MB of wrappers and attributes (65,535 drawings at roughly 50 bytes each) |
 | Chain depth | 16 | Parent and source links counted together: the nesting reached while drawing. Matches v1 macrograph nesting |
@@ -542,6 +544,11 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
     2. **"Any other byte" is any other byte a string keeps**: the lexer leaves DEL and the controls other than BS, HT, LF and CR out of every string (chapter 7), so only 0xA0 to 0xFF reach a provided alphabet to draw the empty cell.
     3. **Joining follows string order**, the order in which a string's characters are drawn, as visual order, whatever the string direction.
     4. **A form the caller did not give draws the isolated glyph**, and the engine's join-causing tatweel is given as dual-joining, which is how it joins; PAR-13 lists four joining types.
+
+15. **A cap on the drawings' records, added 19 November 2026** (`SOLVEDSECURITYISSUES/015`, TODO-6843, DEC-6850). The proposal bounded memory by the contents cap, the staged cap and a constant; the constant grew with every drawing a stream made, about 841 bytes for each empty one, so 447,643 bytes of `D(S1,S2,...,S65535,C)` held 55 MB. Where what was built reads the proposal one way among several:
+    1. **A sixth cap, on what the records hold** (`MAX_DRAWING_RECORD_BYTES`, 4 MB, failure code 8): each drawing is charged the memory its record holds, so about 15,000 drawings can exist at once and not 65,535. The number range is unchanged; a drawing past the cap is not made, and its batch fails, as one past the contents cap is.
+    2. **A label and a frame list are kept apart** and charged only once given, since together they are larger than the rest of a record and most drawings have neither.
+    3. **The figure is reported**: `Terminal::held_bytes` and `Validator::held_bytes`, an upper bound of what one holds, and `MAX_HELD_BYTES`, the most one can hold besides the font and provided sets its caller gives. The resident size the issue's stream causes is now 2.5 MB, against 4.2 MB reported and the 22.8 MB bound.
 
 The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
 

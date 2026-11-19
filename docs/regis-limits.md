@@ -44,6 +44,8 @@ Constants in `crates/regis/src/limits.rs`.
 |---|---|
 | Drawing numbers | 1 to 65,535 |
 | All drawings' contents together | 4 MB |
+| All drawings' records together (`MAX_DRAWING_RECORD_BYTES`), each charged `DRAWING_RECORD_BYTES` (273 bytes on a 64-bit target) and 144 more once it has a label or a frame list (`DRAWING_EXTRAS_BYTES`) | 4 MB, about 15,000 drawings at once (`MOST_DRAWINGS_HELD`); past it the commit fails with code 8 |
+| What a terminal or validator holds (`MAX_HELD_BYTES`), besides the font and provided sets its caller gives; each reports its own figure with `held_bytes()` | 22,751,666 bytes on a 64-bit target |
 | Bytes waiting for one commit | 8 MB |
 | Nesting through parents, sources, looks and frames | 16 |
 | Work of one repaint | 100,000,000 units |
