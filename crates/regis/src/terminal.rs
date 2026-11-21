@@ -202,7 +202,8 @@ impl Terminal {
     }
 
     /// What the stream committed for a numbered drawing: its attributes
-    /// `V` (shown), `G` (layer) and `L` (depth order), whatever animation
+    /// `V` (shown), `G` (layer), `L` (depth order) and `T` (paint rate,
+    /// `None` when the stream gave it none), whatever animation
     /// state it holds. `None` when the drawing does not exist, so that it
     /// also answers whether one does. With [`Terminal::animation`] it
     /// gives a rule table a target's shown part, layer and order
@@ -280,7 +281,8 @@ impl Terminal {
 
     /// Says that `ticks` of the presentation clock, 60 to the second,
     /// have passed (ANIM-1, ANIM-15). Each drawing being painted
-    /// gradually, by its paint rate `T`, has then earned `ticks × rate ×
+    /// gradually, by its paint rate `T` or the default rate in its
+    /// absence, has then earned `ticks × rate ×
     /// 100 ÷ 60` work units since its painting started, counted from the
     /// total of its ticks; the next [`Terminal::compose`] paints what
     /// that buys. It returns true while a shown drawing is still being
@@ -289,6 +291,38 @@ impl Terminal {
     /// `u32::MAX`.
     pub fn advance_ticks(&mut self, ticks: u32) -> bool {
         self.scene.advance_ticks(ticks)
+    }
+
+    /// Sets the default paint rate: the rate at which every numbered
+    /// drawing the stream gave no `T` is painted, in the unit of `T`
+    /// ([`PAINT_RATE_UNIT`] work units a second for each unit), so that a
+    /// page sets one speed for all its drawings and the stream still
+    /// overrides it for any one (DEC-7031 item 2, REQ-7025). 0, as at
+    /// first, is none: such a drawing appears at once. A rate above
+    /// [`MAX_PAINT_RATE`] is taken as it. A drawing with `T0` is painted at
+    /// once whatever the default, and one with another `T` at its own
+    /// rate; a drawing drawn in another's place (a source, a look, a
+    /// frame) is painted at the rate in force of the drawing that placed
+    /// it.
+    ///
+    /// Changing the default starts the painting of every drawing with no
+    /// `T`, and of the drawings below each, as a commit that changed
+    /// their rate would; setting the rate it already has starts nothing.
+    /// It is the receiver's alone: no byte of the stream can read or set
+    /// it. A receiver that wants the default to hold from a picture's
+    /// first commit sets it before feeding the picture's bytes.
+    ///
+    /// [`PAINT_RATE_UNIT`]: crate::limits::PAINT_RATE_UNIT
+    /// [`MAX_PAINT_RATE`]: crate::limits::MAX_PAINT_RATE
+    pub fn set_default_paint_rate(&mut self, rate: u16) {
+        self.scene.set_default_paint_rate(rate);
+    }
+
+    /// The default paint rate, as [`Terminal::set_default_paint_rate`]
+    /// left it: 0 when there is none.
+    #[must_use]
+    pub const fn default_paint_rate(&self) -> u16 {
+        self.scene.default_paint_rate()
     }
 
     /// Makes the picture to show: the displayed page of `base`, the screen

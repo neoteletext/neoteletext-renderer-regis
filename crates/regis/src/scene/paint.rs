@@ -346,6 +346,7 @@ impl Scene {
             viewer: self.viewer,
             animation: &self.animation,
             painting: Some(&self.painting),
+            default_rate: self.default_rate,
         };
         let top = walk.ordered(0);
         let mut layout = Layout::default();
@@ -520,6 +521,9 @@ pub(super) struct Walk<'a> {
     /// The ticks each drawing being painted gradually has been painting;
     /// `None` to take every drawing as finished.
     pub(super) painting: Option<&'a BTreeMap<u16, u64>>,
+    /// The rate a drawing with no `T` of its own is painted at, 0 for at
+    /// once (DEC-7031 item 2).
+    pub(super) default_rate: u16,
 }
 
 impl Walk<'_> {
@@ -644,13 +648,16 @@ impl Walk<'_> {
         let Some(place) = self.enter(sink.origins, number, drawing, place, as_source) else { return };
         *sink.visits = sink.visits.saturating_add(1);
         // A drawing painted as part of a source is paid for by the
-        // drawing that placed it: its own paint rate is not used.
+        // drawing that placed it, at that drawing's rate in force: its
+        // own paint rate is not used, nor the default in its place
+        // (DEC-7031 item 2).
         let painting = if place.reused { None } else { self.painting.and_then(|painting| painting.get(&number)) };
-        if let Some(ticks) = painting.filter(|_| drawing.rate != 0) {
+        let rate = drawing.rate_in_force(self.default_rate);
+        if let Some(ticks) = painting.filter(|_| rate != 0) {
             // What is painted in the drawing's place appears in order as
             // its work is earned, and its children wait for it to finish
             // (DEC-6382 items 1 and 3).
-            let mut left = painted_after(*ticks, drawing.rate);
+            let mut left = painted_after(*ticks, rate);
             let mut stopped = false;
             let step = &mut *sink.step;
             let mut gradual = |step_whole: Step| {

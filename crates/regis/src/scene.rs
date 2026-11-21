@@ -135,8 +135,11 @@ pub(crate) struct Scene {
     /// The drawings whose painting is to start, with the drawings below
     /// them, when time next passes or a picture is made.
     starting: BTreeSet<u16>,
-    /// Whether any committed drawing has a paint rate.
+    /// Whether any committed drawing has a paint rate in force.
     rated: bool,
+    /// The receiver's default paint rate: the rate of every drawing the
+    /// stream gave no `T`, 0 for at once (DEC-7031 item 2, REQ-7025).
+    default_rate: u16,
 }
 
 impl Scene {
@@ -158,6 +161,7 @@ impl Scene {
             painting: BTreeMap::new(),
             starting: BTreeSet::new(),
             rated: false,
+            default_rate: 0,
         }
     }
 

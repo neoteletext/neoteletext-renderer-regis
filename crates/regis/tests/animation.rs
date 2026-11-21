@@ -631,25 +631,25 @@ fn the_committed_shown_layer_and_order_are_given_apart_from_the_animation_state(
     // Operations waiting for their commit have changed nothing.
     assert_eq!(terminal.committed_drawing(1), None);
     let _ = terminal.feed_regis(&mut screen, b"D(C)");
-    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: false, layer: 3, order: -5 }));
+    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: false, layer: 3, order: -5, rate: None }));
     // The defaults: shown, layer 1, depth 0 (ANIM-10).
-    assert_eq!(terminal.committed_drawing(2), Some(CommittedDrawing { shown: true, layer: 1, order: 0 }));
-    assert_eq!(terminal.committed_drawing(3), Some(CommittedDrawing { shown: true, layer: 1, order: 7 }));
+    assert_eq!(terminal.committed_drawing(2), Some(CommittedDrawing { shown: true, layer: 1, order: 0, rate: None }));
+    assert_eq!(terminal.committed_drawing(3), Some(CommittedDrawing { shown: true, layer: 1, order: 7, rate: None }));
     assert_eq!((terminal.committed_drawing(4), terminal.committed_drawing(0)), (None, None));
     // The animation state stands in for the attributes without changing
     // what was committed.
     let state = AnimationState { shown: Some(true), layer: Some(0), order: Some(9), ..NONE };
     assert!(terminal.set_animation(1, state));
-    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: false, layer: 3, order: -5 }));
+    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: false, layer: 3, order: -5, rate: None }));
     assert_eq!(terminal.animation(1), Some(state));
     // A later commit is the last writer; a deletion ends the drawing.
     let _ = terminal.feed_regis(&mut screen, b"D(S1(V1,G2,L4),C)");
-    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: true, layer: 2, order: 4 }));
+    assert_eq!(terminal.committed_drawing(1), Some(CommittedDrawing { shown: true, layer: 2, order: 4, rate: None }));
     let _ = terminal.feed_regis(&mut screen, b"D(K1,C)");
     assert_eq!((terminal.committed_drawing(1), terminal.committed_drawing(2)), (None, None));
     // A failed commit leaves what was committed.
     let _ = terminal.feed_regis(&mut screen, b"D(S3(V0,P99),C)");
-    assert_eq!(terminal.committed_drawing(3), Some(CommittedDrawing { shown: true, layer: 1, order: 7 }));
+    assert_eq!(terminal.committed_drawing(3), Some(CommittedDrawing { shown: true, layer: 1, order: 7, rate: None }));
 }
 
 /// ANIM-17: "A sheet draws nothing itself: a ReGIS sheet's drawings that
@@ -687,7 +687,10 @@ fn a_validator_names_the_drawing_a_sheet_leaves_visible() {
     let _ = validator.feed_regis(masters.as_bytes());
     assert_eq!((validator.visible_drawing(), validator.committed_drawing(41)), (None, None));
     let _ = validator.feed_regis(b"D(S41(V0,G2),C)");
-    assert_eq!(validator.committed_drawing(41), Some(CommittedDrawing { shown: false, layer: 2, order: 0 }));
+    assert_eq!(
+        validator.committed_drawing(41),
+        Some(CommittedDrawing { shown: false, layer: 2, order: 0, rate: None })
+    );
     assert_eq!(validator.visible_drawing(), Some(42));
 }
 

@@ -12,7 +12,8 @@ use super::Scene;
 use super::paint::Walk;
 use super::stage::{Contents, Stage};
 use crate::limits::{
-    LAYERS, MAX_ANIMATED_DRAWINGS, MAX_DRAWING_DEPTH, MAX_OBJECT_FRAMES, PAINT_RATE_UNIT, TICKS_PER_SECOND,
+    LAYERS, MAX_ANIMATED_DRAWINGS, MAX_DRAWING_DEPTH, MAX_OBJECT_FRAMES, MAX_PAINT_RATE, PAINT_RATE_UNIT,
+    TICKS_PER_SECOND,
 };
 use crate::machine::Attribute;
 use crate::surface::Bounds;
@@ -118,6 +119,13 @@ pub struct CommittedDrawing {
     /// The attribute `L`: its depth, which orders it within its layer, or
     /// within its parent.
     pub order: i32,
+    /// The attribute `T`, the paint rate: `Some(0)` when the stream said
+    /// `T0`, at once, and `None` when it gave the drawing no `T` at all,
+    /// which a receiver's default paint rate then fills
+    /// ([`Terminal::set_default_paint_rate`]; DEC-7031 item 2, REQ-7025).
+    ///
+    /// [`Terminal::set_default_paint_rate`]: crate::Terminal::set_default_paint_rate
+    pub rate: Option<u16>,
 }
 
 /// A rectangle of a picture's pixels: what [`Terminal::bounds`] gives
@@ -167,8 +175,8 @@ impl Default for Written {
     }
 }
 
-/// What painting gradually depends on, for one drawing with a paint rate,
-/// before a change: compared after it to find the drawings whose painting
+/// What painting gradually depends on, for one drawing with a paint rate
+/// in force, before a change: compared after it to find the drawings whose painting
 /// starts (DEC-6382 item 2).
 pub(super) struct Rated {
     number: u16,
@@ -213,7 +221,13 @@ fn visible_up_the_chain(stage: &Stage, animation: &BTreeMap<u16, AnimationState>
 
 impl Scene {
     fn walk(&self) -> Walk<'_> {
-        Walk { stage: &self.committed, viewer: self.viewer, animation: &self.animation, painting: None }
+        Walk {
+            stage: &self.committed,
+            viewer: self.viewer,
+            animation: &self.animation,
+            painting: None,
+            default_rate: self.default_rate,
+        }
     }
 
     /// Sets a drawing's animation state. False when it was not kept as
@@ -293,7 +307,12 @@ impl Scene {
     /// and `L`, the animation state apart.
     pub(crate) fn committed_drawing(&self, number: u16) -> Option<CommittedDrawing> {
         let drawing = self.committed.get(number)?;
-        Some(CommittedDrawing { shown: drawing.visible, layer: drawing.layer, order: drawing.depth })
+        Some(CommittedDrawing {
+            shown: drawing.visible,
+            layer: drawing.layer,
+            order: drawing.depth,
+            rate: drawing.rate,
+        })
     }
 
     /// The label of a committed drawing (`U`), if it has one (DEC-6638
@@ -384,11 +403,41 @@ impl Scene {
             state.shown = None;
         }
         self.forget_empty_states();
-        self.rated = self.committed.drawings().any(|(_, drawing)| drawing.rate != 0);
-        let committed = &self.committed;
-        self.painting.retain(|number, _| committed.get(*number).is_some_and(|drawing| drawing.rate != 0));
-        self.starting.retain(|number| committed.get(*number).is_some());
+        self.forget_unrated();
         self.start_painting(before);
+    }
+
+    /// Finds again whether any drawing has a paint rate in force, and
+    /// forgets the painting of every drawing that has none or is gone:
+    /// after a commit, and after a change of the default rate.
+    fn forget_unrated(&mut self) {
+        let default_rate = self.default_rate;
+        let committed = &self.committed;
+        self.rated = committed.drawings().any(|(_, drawing)| drawing.rate_in_force(default_rate) != 0);
+        self.painting
+            .retain(|number, _| committed.get(*number).is_some_and(|drawing| drawing.rate_in_force(default_rate) != 0));
+        self.starting.retain(|number| committed.get(*number).is_some());
+    }
+
+    /// The default paint rate: what a drawing with no `T` of its own is
+    /// painted at (DEC-7031 item 2, REQ-7025).
+    pub(crate) const fn default_paint_rate(&self) -> u16 {
+        self.default_rate
+    }
+
+    /// Sets the default paint rate. A change starts the painting of every
+    /// drawing with no `T` of its own, as a commit that changed its rate
+    /// would (DEC-6382 item 2 as built; DEC-7031 item 2); setting the rate
+    /// it already has starts nothing.
+    pub(crate) fn set_default_paint_rate(&mut self, rate: u16) {
+        let rate = rate.min(MAX_PAINT_RATE);
+        if rate == self.default_rate {
+            return;
+        }
+        let before = self.rated();
+        self.default_rate = rate;
+        self.forget_unrated();
+        self.start_painting(&before);
     }
 
     /// A state that sets nothing is no state: its place is freed.
@@ -412,17 +461,18 @@ impl Scene {
         fits
     }
 
-    /// The drawings with a paint rate, as they stand.
+    /// The drawings with a paint rate in force, as they stand.
     pub(super) fn rated(&self) -> Vec<Rated> {
         if !self.rated {
             return Vec::new();
         }
-        let rated = self.committed.drawings().filter(|(_, drawing)| drawing.rate != 0);
+        let default_rate = self.default_rate;
+        let rated = self.committed.drawings().filter(|(_, drawing)| drawing.rate_in_force(default_rate) != 0);
         rated
             .map(|(number, drawing)| Rated {
                 number,
                 contents: drawing.contents.clone(),
-                rate: drawing.rate,
+                rate: drawing.rate_in_force(default_rate),
                 visible: visible_up_the_chain(&self.committed, &self.animation, number),
             })
             .collect()
@@ -437,11 +487,16 @@ impl Scene {
             self.starting.clear();
             return;
         }
-        for (number, drawing) in self.committed.drawings().filter(|(_, drawing)| drawing.rate != 0) {
+        let default_rate = self.default_rate;
+        for (number, drawing) in self.committed.drawings() {
+            let rate = drawing.rate_in_force(default_rate);
+            if rate == 0 {
+                continue;
+            }
             let was = before.binary_search_by_key(&number, |rated| rated.number).ok().and_then(|at| before.get(at));
             let starts = was.is_none_or(|was| {
                 !Contents::ptr_eq(&was.contents, &drawing.contents)
-                    || was.rate != drawing.rate
+                    || was.rate != rate
                     || (!was.visible && visible_up_the_chain(&self.committed, &self.animation, number))
             });
             if starts {
@@ -465,7 +520,7 @@ impl Scene {
         while let Some((number, under)) = walk.pop() {
             let Some(drawing) = self.committed.get(number) else { continue };
             let starts = under || starting.contains(&number);
-            if starts && drawing.rate != 0 {
+            if starts && drawing.rate_in_force(self.default_rate) != 0 {
                 self.painting.insert(number, 0);
             }
             walk.extend(self.committed.child_numbers(number).map(|child| (child, starts)));
@@ -507,9 +562,10 @@ impl Walk<'_> {
         }
         let mut left = ticks;
         if let Some(painted) = painting.get_mut(&number) {
-            let needed = ticks_to_paint(self.own_cost(number, drawing), drawing.rate);
+            let rate = drawing.rate_in_force(self.default_rate);
+            let needed = ticks_to_paint(self.own_cost(number, drawing), rate);
             let total = painted.saturating_add(ticks);
-            if drawing.rate != 0 && total < needed {
+            if rate != 0 && total < needed {
                 *painted = total;
                 return true;
             }

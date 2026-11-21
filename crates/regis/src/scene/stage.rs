@@ -60,8 +60,11 @@ pub(crate) struct Drawing {
     /// The drawing painted in its place while the alternative look is
     /// forced, 0 for none (ANIM-10).
     pub(super) alternative: u16,
-    /// The paint rate, 0 for at once (DEC-6382; ANIM-15).
-    pub(super) rate: u16,
+    /// The paint rate `T` the stream gave it, 0 for at once (DEC-6382;
+    /// ANIM-15); `None` when it gave none, and the drawing then takes the
+    /// receiver's default (DEC-7031 item 2, REQ-7025). A drawing deleted
+    /// and made again has none.
+    pub(super) rate: Option<u16>,
     /// Its frame list and label, kept apart and only once one is given:
     /// together they are larger than the rest of the record, and most
     /// drawings have neither (SOLVEDSECURITYISSUES 015).
@@ -80,6 +83,12 @@ pub(crate) struct Extras {
 }
 
 impl Drawing {
+    /// Its paint rate in force: its own `T`, else the receiver's default
+    /// (DEC-7031 item 2). 0 paints it at once.
+    pub(super) fn rate_in_force(&self, default_rate: u16) -> u16 {
+        self.rate.unwrap_or(default_rate)
+    }
+
     /// Its frame list; empty when it has none.
     pub(super) fn frames(&self) -> Frames {
         self.extras.as_ref().map(|extras| extras.frames).unwrap_or_default()
@@ -111,7 +120,7 @@ impl Drawing {
             clip: None,
             layer: DEFAULT_LAYER,
             alternative: 0,
-            rate: 0,
+            rate: None,
             extras: None,
         }
     }
@@ -267,7 +276,7 @@ impl Stage {
             Attribute::Layer(layer) => drawing.layer = layer,
             Attribute::Alternative(alternative) => drawing.alternative = alternative,
             Attribute::Frames(frames) => drawing.extras.get_or_insert_default().frames = frames,
-            Attribute::Rate(rate) => drawing.rate = rate,
+            Attribute::Rate(rate) => drawing.rate = Some(rate),
             Attribute::Label(label) => drawing.extras.get_or_insert_default().label = label,
             Attribute::Parent(parent) => {
                 let old = core::mem::replace(&mut drawing.parent, parent);
