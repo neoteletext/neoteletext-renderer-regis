@@ -95,7 +95,7 @@ Every numbered drawing has the same fourteen attributes. The hover look and the 
 | Layer | Which of the four layers a top-level drawing is drawn in, 0 to 3; a child is in its top-level ancestor's layer | 1 |
 | Alternative look | Another drawing to draw in its place while the receiver forces the alternative look | None |
 | Frame list | 1 to 16 drawings, of which the one numbered by the frame in force is drawn in its place | None |
-| Paint rate | How fast the receiver paints it, in hundreds of work units a second; 0 paints it at once | 0 |
+| Paint rate | How fast the receiver paints it, in hundreds of work units a second; 0 paints it at once | None: the receiver's default paint rate if it has one, else at once |
 | Label | What a screen reader speaks for it: one short line of plain text, never drawn | None |
 
 - A child moves, hides and clips with its parent.
@@ -247,17 +247,45 @@ The receiver can set, for at most 64 numbered drawings at once, an animation sta
 
 The attribute `T<rate>` makes the receiver paint a drawing gradually, as a v1 picture appears while its bytes arrive (the owner's request of 16 November 2026; DEC-6382, accepted on 18 November 2026).
 
-- **The rate:** 0, the default, paints the drawing at once. A rate from 1 to 32,767 paints what is drawn for the drawing itself (its own contents, or the source, look or frame drawn in its place, with that drawing's children) at `rate` × 100 work units a second: `T1` is a pen moving 100 pixels a second, `T50` 5,000.
+- **The rate:** 0 paints the drawing at once. A rate from 1 to 32,767 paints what is drawn for the drawing itself (its own contents, or the source, look or frame drawn in its place, with that drawing's children) at `rate` × 100 work units a second: `T1` is a pen moving 100 pixels a second, `T50` 5,000.
 - **What a work unit is here:** a pixel a line or curve visits, the area of a fill or of a character cell, 4 for each degree of an arc, and 64 for each byte a macrograph call expands to. The 64 units a repaint pays for each byte of the contents themselves are not charged to the rate, so that a line's speed does not depend on how many digits its coordinates were written with.
 - **In order, and whole things whole:** the contents are painted from their start up to the first thing the work earned so far cannot pay for. A line appears pixel by pixel; a filled area or a character appears at once when all of its cost has been earned.
 - **When painting starts:** at the commit in which the drawing is new, its contents are defined again, its rate changes, or it becomes visible (itself or a drawing above it); and when the receiver's animation state shows it. A commit that only moves, re-parents, clips or reorders it does not start it again, and a drawing that has finished stays whole.
 - **Children wait.** A child of a drawing still being painted does not appear until the parent has finished; then each child starts, at its own rate, or at once if it has none. When a drawing's painting starts, that of the drawings below it starts with it. Drawings with no common ancestor paint at the same time.
-- **A drawing drawn in another's place** is paid for at the rate of the drawing that placed it; its own rate is not used there.
+- **Unset is not `T0`** (DEC-7031 item 2; REQ-7025; 21 November 2026). A drawing the stream has given no `T` has no rate of its own: it is told apart from one given `T0`, which says "at once" and means it. A drawing deleted and made again is unset again. No operation of the stream unsets a rate once given; `Terminal::committed_drawing` gives the rate as committed, none for unset.
+- **The default paint rate** is the receiver's, set from the page's own data and never by a byte of the stream (`Terminal::set_default_paint_rate`; 0, as at first, for none; a value above 32,767 is taken as 32,767). A drawing's rate in force is its own `T`, or the default when it is unset; every rule of this section reads the rate in force. So a page sets one speed for all its drawings, `T0` still paints one at once, and any other `T` keeps its own speed. Changing the default starts the painting of every unset drawing, and of the drawings below each, as a commit that changed their rate would; setting the default it already has starts nothing. A receiver that wants the default to hold from a picture's first commit sets it before feeding the picture. With no default, a stream paints exactly as it did before there was one. The base picture is not a numbered drawing and has no paint rate; it is paced by a replay (below).
+- **A drawing drawn in another's place** is paid for at the rate in force of the drawing that placed it; its own rate is not used there, nor the default in its place.
 - **The receiver supplies the time**, in ticks of a sixtieth of a second (`Terminal::advance_ticks`). After `n` ticks a drawing has earned `n` × rate × 100 ÷ 60 work units, rounded down, counted from the total of its ticks so that nothing is lost to rounding. Ticks left over when a drawing finishes go to its children. The call says whether anything shown is still being painted.
-- **What does not change:** the finished picture is exactly the picture painted at once. The pick record follows the pixels painted so far, so a part not yet drawn cannot be clicked. The commit's checks are unchanged, since a part-painted drawing never costs more than a whole one. A stream that sets no `T` paints exactly as before.
+- **What does not change:** the finished picture is exactly the picture painted at once. The pick record follows the pixels painted so far, so a part not yet drawn cannot be clicked. The commit's checks are unchanged, since a part-painted drawing never costs more than a whole one. A stream that sets no `T`, shown by a receiver with no default rate, paints exactly as before.
 - **Each step is a damage repaint** of the drawing's rectangle. A part-painted drawing's contents are metered whole at each repaint, wherever the damage lies, so that the part painted is the same part; once finished it is repainted as any drawing is.
 
-Example: `D(S7(T50))` paints drawing 7 at 5,000 work units a second.
+Example: `D(S7(T50))` paints drawing 7 at 5,000 work units a second. With a default rate of 20, `D(S1(X10),S2(T0),S3(T4),C)` paints drawing 1 at 2,000 work units a second, drawing 2 at once and drawing 3 at 400.
+
+### The painted report
+
+A receiver can be told when a drawing has finished painting, so that a page's rule table can play a sound, show a caption or start the next drawing then (DEC-7031 items 2 and 4; REQ-7026; 21 November 2026).
+
+- **Watching.** `Terminal::watch_painted` names the drawings to report, at most 32 different numbers (`MAX_WATCHED_PAINTINGS`), in place of those named before; a longer list is refused whole and the watched drawings stay as they were. A number need not exist yet. Only watched drawings are reported, so a scene of thousands of drawings reports no more than 32 at once.
+- **Whole.** A drawing is whole when it exists, it is shown with every drawing up its parent chain (the animation state counted), and neither it nor a drawing above it is still being painted or about to be. A child waiting for its parent is therefore not whole until the parent has finished and the child itself has.
+- **Episodes.** Each watched drawing is reported once for each episode. An episode opens when the drawing is newly watched (so a drawing already whole is reported once after it is named); when a commit makes it new, defines its contents again, changes its rate in force or makes it visible; when the animation state shows it or a drawing above it; when a change of the default rate changes its rate in force; and when the painting of a drawing above it starts. It closes, and the drawing is reported, at the first commit, `Terminal::advance_ticks`, `Terminal::set_animation`, `Terminal::clear_animation` or `Terminal::set_default_paint_rate` after which the drawing is whole.
+- **At once is reported too.** A drawing with no rate in force is whole as it appears, and is reported by the very call that made it appear, so a page's sequence runs the same whether or not anything is painted gradually.
+- **Hidden and deleted.** A hidden drawing's episode waits until the drawing is shown. A deleted drawing's episode is dropped; a drawing made again under the same number in a later commit is new and opens one.
+- **Taking the reports.** `Terminal::take_painted` gives the watched drawings that became whole since the last call, in ascending order of number. A drawing that became whole and was deleted, or whose painting started again, before the receiver asked is still reported; one no longer watched is not.
+- **Memory.** The watched drawings are counted in `Terminal::held_bytes` and in `MAX_HELD_BYTES`.
+
+### Replay at a pace
+
+A page may state a line speed at which its picture is painted, as if its bytes were arriving over a serial line (DEC-7031 items 1 and 2; REQ-7024; 21 November 2026). The speed is the page's own data, outside the stream. The renderer knows nothing of line speeds: `Replay`, beside the terminal, holds a stream's bytes and feeds them at a `Pace` of so many bytes in so many ticks, and its caller turns a speed into a pace (1,200 bits a second at ten bits a byte is 1,200 bytes in 600 ticks).
+
+- **A run** begins when bytes are pushed (`Replay::push`) while none are held. After `n` ticks of a run (`Replay::advance`), `n` × bytes ÷ ticks bytes of it have been fed, rounded down and counted from the total of the run's ticks so that nothing is lost to rounding, or all there were. Bytes pushed during a run join its end.
+- **Credit is not saved.** When the last held byte is fed the run is over and what the pace had left unspent is forgotten: bytes pushed later begin a new run and wait their full time, as bytes arriving on an idle line do.
+- **The hold is bounded** at 262,144 bytes (`MAX_REPLAY_HELD_BYTES`). A push that would hold more ends the pacing: the pace is set to none and everything held and pushed is fed at once.
+- **No pace**, as at first, feeds every push at once, exactly as feeding the terminal directly. Setting the pace to none during a run feeds what is held at the next push or advance. A pace part given as 0 is taken as 1.
+- **The whole stream is paced**, ReGIS v2 operations with the rest: a numbered drawing appears when its commit has arrived, and is then painted at its rate in force.
+- **What does not change:** the terminal takes its bytes in pieces of any size, so the picture at each tick is the picture of the bytes fed so far, and the picture at the end is the picture of the stream fed at once.
+- **The caller's part.** `Replay::ticks_to_next` says when the next byte is due and `Replay::idle` that nothing is held; the caller still calls `Terminal::advance_ticks` for the paint rates, and takes a picture's replay as finished when the stream has ended and the replay is idle.
+
+`regis-render --frames` shows both: `--default-rate N` sets the default paint rate, and `--pace BYTES/TICKS` feeds the input at that pace from tick 0, where otherwise all of it is read before tick 0.
 
 ### The animation budget
 
@@ -383,7 +411,7 @@ This section fixes the syntax of `D`. It follows v1 conventions: options in pare
 | `G` | Layer (group) | 0 to 3 | 1 |
 | `N` | Alternative look | Drawing number, or 0 for none | 0 |
 | `F` | Frame list | `F(<n>,<n>,…)`: 1 to 16 drawing numbers from 1 to 65,535, with commas between; or `F0` for none | None |
-| `T` | Paint rate (time) | 0 to 32,767 | 0 |
+| `T` | Paint rate (time) | 0 to 32,767 | None (unset) |
 | `U` | Label (utterance) | A quoted string, as v1 quotes one (`'…'` or `"…"`, the quote doubled inside): at most 64 bytes of plain text, or `''` for none | None |
 
 - Attribute values are 16-bit signed integers, the size v1 uses for coordinates ([chapter 1](https://vt100.net/docs/vt3xx-gp/chapter1.html)).
@@ -551,6 +579,15 @@ The renderer was built on 15 November 2026 (`crates/regis/src/scene/`, `machine/
     3. **The figure is reported**: `Terminal::held_bytes` and `Validator::held_bytes`, an upper bound of what one holds, and `MAX_HELD_BYTES`, the most one can hold besides the font and provided sets its caller gives. The resident size the issue's stream causes is now 2.5 MB, against 4.2 MB reported and the 22.8 MB bound.
 
 The measured cost to v1 of the drawing window every pixel now passes through: 1,600 renders of the seven example pictures took 6.24 s before and 6.70 s after, 7 % more, with the same pixels.
+
+16. **Painting as a show, added 21 November 2026** (DEC-7023, DEC-7031 item 2; REQ-7024, REQ-7025, REQ-7026): the unset paint rate, the receiver's default paint rate, the painted report and replay at a pace (see Paint rate, The painted report and Replay at a pace). The default of the attribute `T` was 0 and is now unset, which with no default rate paints as 0 did. Where what was built adds to DEC-7031 item 2 or reads it one way among several:
+    1. **`Terminal::clear_animation` closes episodes too**, being a change of the animation state as `set_animation` is. Naming drawings to watch does not: a drawing already whole when it is first watched is reported at the next of the five calls.
+    2. **A change of the default rate opens an episode** for each watched drawing whose rate in force it changes, as a commit that changed the rate does.
+    3. **A drawing that became whole and was then deleted before the receiver asked is still reported**; "a deleted drawing's episode is dropped" is read of an episode still open.
+    4. **A drawing deleted and made again with the same contents, rate and visibility inside one batch** is, after the commit, the drawing it was: no episode opens and no painting starts, as was already so for the paint rate.
+    5. **`Replay::framed`** was added beside `Replay::new`: the first feeds a terminal data stream as `Terminal::feed` does, the second bare ReGIS commands as `Terminal::feed_regis` does.
+    6. **A pace's bytes given as 0 are taken as 1**, as its ticks are, so that no pace holds its bytes for ever.
+    7. **Passing the hold's cap sets the pace to none** until the caller sets one again, so that a stream too long to hold is not paced in part.
 
 ## Sources
 

@@ -64,6 +64,9 @@ Added on 18 November 2026 with the renderer's animation (REQ-6530; neoteletext-c
 | Entries in a frame list (`MAX_OBJECT_FRAMES`) | 16 | A seventeenth is malformed: the commit fails with code 7 |
 | Paint rate (`MAX_PAINT_RATE`) | 32,767, each unit 100 work units a second (`PAINT_RATE_UNIT`) | A greater rate is malformed: the commit fails with code 7 |
 | A drawing's label, `U` (`MAX_LABEL_BYTES`), and a picture's title, `D(T'...')` (`MAX_TITLE_BYTES`) | 64 bytes each, plain text | Longer, or holding a backspace, tab, line feed or carriage return: malformed, the commit fails with code 7 |
+| Default paint rate (`Terminal::set_default_paint_rate`) | 0 for none, else 1 to 32,767 (`MAX_PAINT_RATE`) | A greater rate is taken as 32,767 |
+| Drawings watched for their painting finishing (`MAX_WATCHED_PAINTINGS`) | 32 | The list is refused whole and the watched drawings stay as they were |
+| Bytes a replay holds while it feeds them at a pace (`MAX_REPLAY_HELD_BYTES`) | 262,144 | Pacing ends: everything held and pushed is fed at once |
 | Drawings holding animation state (`MAX_ANIMATED_DRAWINGS`) | 64 | The state is refused |
 | Drawings cycling their frames (`MAX_CYCLING_OBJECTS`) | 16 | The cycle does nothing and is counted |
 | Pixels repainted for animation in one tick (`MAX_ANIMATION_PIXELS_PER_TICK`) | 192,000, half a picture | The painting waits for the next tick |
