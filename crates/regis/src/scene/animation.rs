@@ -564,7 +564,7 @@ impl Scene {
             // A watched drawing waits again for a painting that begins
             // above it, or its own: its episode opens (DEC-7031 item 2).
             let began = began_above || begins;
-            if began && let Some(watch) = self.watched.get_mut(&number) {
+            if began && let Some(watch) = super::watch::find(&mut self.watched, number) {
                 watch.open = true;
             }
             walk.extend(self.committed.child_numbers(number).map(|child| (child, starts, began)));

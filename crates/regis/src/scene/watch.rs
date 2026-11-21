@@ -9,7 +9,6 @@
 //! are reported, so that a scene of thousands of drawings cannot flood
 //! the receiver with reports nobody asked for.
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use super::Scene;
@@ -27,21 +26,34 @@ pub(super) struct Watch {
     finished: bool,
 }
 
+/// The watched drawings, in order of number. A list and not a map: it is
+/// short, and an empty list holds nothing, where a map's accounting must
+/// allow for a root node in every terminal and validator, watching or
+/// not (SOLVEDSECURITYISSUES 015 counts what each reader holds).
+pub(super) type Watched = Vec<(u16, Watch)>;
+
+/// The record kept for a drawing, if it is watched.
+pub(super) fn find(watched: &mut Watched, number: u16) -> Option<&mut Watch> {
+    let at = watched.binary_search_by_key(&number, |(watched, _)| *watched).ok()?;
+    watched.get_mut(at).map(|(_, watch)| watch)
+}
+
 impl Scene {
     /// Replaces the watched drawings. A drawing not watched before has an
     /// episode opened; one watched before keeps its episode and any report
     /// not yet taken. False, with nothing changed, when more than
     /// [`MAX_WATCHED_PAINTINGS`] different numbers are named.
     pub(crate) fn watch_painted(&mut self, numbers: &[u16]) -> bool {
-        let mut watched = BTreeMap::new();
+        // The caller's list may be of any length: no more room is made
+        // than the cap, and it is refused as soon as it is one too many.
+        let mut watched = Watched::with_capacity(numbers.len().min(MAX_WATCHED_PAINTINGS));
         for number in numbers {
-            // Refused as soon as it is one too many: the list is the
-            // caller's and may be of any length.
-            if watched.len() >= MAX_WATCHED_PAINTINGS && !watched.contains_key(number) {
+            let Err(at) = watched.binary_search_by_key(number, |(watched, _)| *watched) else { continue };
+            if watched.len() >= MAX_WATCHED_PAINTINGS {
                 return false;
             }
-            let watch = self.watched.get(number).copied().unwrap_or(Watch { open: true, finished: false });
-            watched.insert(*number, watch);
+            let watch = find(&mut self.watched, *number).map_or(Watch { open: true, finished: false }, |watch| *watch);
+            watched.insert(at, (*number, watch));
         }
         self.watched = watched;
         true
@@ -50,15 +62,15 @@ impl Scene {
     /// The watched drawings that became whole since the last call, in
     /// order of number.
     pub(crate) fn take_painted(&mut self) -> Vec<u16> {
-        let taken = |(number, watch): (&u16, &mut Watch)| core::mem::take(&mut watch.finished).then_some(*number);
+        let taken = |(number, watch): &mut (u16, Watch)| core::mem::take(&mut watch.finished).then_some(*number);
         self.watched.iter_mut().filter_map(taken).collect()
     }
 
     /// The watched drawings as they stand, in order of number, before a
     /// commit or a change of the default rate.
     pub(super) fn watched_standing(&self) -> Vec<Rated> {
-        let standing = |number: &u16| Some(self.standing(*number, self.committed.get(*number)?));
-        self.watched.keys().filter_map(standing).collect()
+        let standing = |(number, _): &(u16, Watch)| Some(self.standing(*number, self.committed.get(*number)?));
+        self.watched.iter().filter_map(standing).collect()
     }
 
     /// After a commit or a change of the default rate: a watched drawing
@@ -82,7 +94,8 @@ impl Scene {
     /// The watched drawings that are not shown, with every drawing up
     /// their parent chain, before a change of the animation state.
     pub(super) fn watched_hidden(&self) -> Vec<u16> {
-        self.watched.keys().copied().filter(|number| !self.shown_up_the_chain(*number)).collect()
+        let watched = self.watched.iter().map(|(number, _)| *number);
+        watched.filter(|number| !self.shown_up_the_chain(*number)).collect()
     }
 
     /// After a change of the animation state: each watched drawing it
@@ -92,7 +105,7 @@ impl Scene {
     pub(super) fn open_shown(&mut self, hidden_before: &[u16]) {
         for number in hidden_before {
             if self.shown_up_the_chain(*number)
-                && let Some(watch) = self.watched.get_mut(number)
+                && let Some(watch) = find(&mut self.watched, *number)
             {
                 watch.open = true;
             }

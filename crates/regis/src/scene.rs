@@ -23,7 +23,7 @@ use capture::{Capture, Captured};
 pub use picture::{Pick, Picture};
 use stage::Stage;
 pub(crate) use stage::{Drawing, Extras};
-use watch::Watch;
+use watch::{Watch, Watched};
 
 use crate::event::{CommitError, Event};
 use crate::font::{Font, Loadable};
@@ -79,8 +79,8 @@ const PAINTING_ENTRY_BYTES: usize = ordered_map_entry_bytes(size_of::<u16>(), si
 const ANIMATED_ENTRY_BYTES: usize = ordered_map_entry_bytes(size_of::<u16>(), size_of::<AnimationState>())
     .saturating_add(ordered_map_entry_bytes(size_of::<u16>(), size_of::<Written>()));
 
-/// The memory one watched drawing's entry holds (DEC-7031 item 2).
-const WATCHED_ENTRY_BYTES: usize = ordered_map_entry_bytes(size_of::<u16>(), size_of::<Watch>());
+/// The most the list of watched drawings holds (DEC-7031 item 2).
+const MOST_WATCHED_BYTES: usize = held_allocation(MAX_WATCHED_PAINTINGS.saturating_mul(size_of::<(u16, Watch)>()));
 
 /// The most the receiver's per-drawing painting state can hold: every
 /// drawing a scene can hold being painted, every animated drawing and
@@ -89,14 +89,14 @@ pub(crate) const fn most_painting_state_bytes() -> usize {
     MOST_DRAWINGS_HELD
         .saturating_mul(PAINTING_ENTRY_BYTES)
         .saturating_add(MAX_ANIMATED_DRAWINGS.saturating_mul(ANIMATED_ENTRY_BYTES))
-        .saturating_add(MAX_WATCHED_PAINTINGS.saturating_mul(WATCHED_ENTRY_BYTES))
+        .saturating_add(MOST_WATCHED_BYTES)
 }
 
 /// The roots of the scene's maps, which [`ordered_map_entry_bytes`] does
-/// not count: two for each scene, five for the painting, animation and
-/// watching state, two for a commit's checks, and the empty contents each
-/// scene shares, each at most the root of the largest map.
-pub(crate) const MAP_ROOTS_BYTES: usize = 13 * ordered_map_root_bytes(size_of::<u16>(), size_of::<AnimationState>())
+/// not count: two for each scene, four for the painting and animation
+/// state, two for a commit's checks, and the empty contents each scene
+/// shares, each at most the root of the largest map.
+pub(crate) const MAP_ROOTS_BYTES: usize = 12 * ordered_map_root_bytes(size_of::<u16>(), size_of::<AnimationState>())
     + 2 * held_allocation(2 * size_of::<usize>());
 
 /// The operations waiting for a commit.
@@ -149,7 +149,7 @@ pub(crate) struct Scene {
     default_rate: u16,
     /// The drawings whose becoming whole the receiver is told of: at most
     /// [`MAX_WATCHED_PAINTINGS`] (DEC-7031 item 2, REQ-7026).
-    watched: BTreeMap<u16, Watch>,
+    watched: Watched,
 }
 
 impl Scene {
@@ -172,7 +172,7 @@ impl Scene {
             starting: BTreeSet::new(),
             rated: false,
             default_rate: 0,
-            watched: BTreeMap::new(),
+            watched: Watched::new(),
         }
     }
 
@@ -222,7 +222,7 @@ impl Scene {
         let painting = self.painting.len().saturating_add(self.starting.len()).saturating_mul(PAINTING_ENTRY_BYTES);
         let written = self.batch.as_ref().map_or(0, |batch| batch.written.len());
         let animated = self.animation.len().saturating_add(written).saturating_mul(ANIMATED_ENTRY_BYTES);
-        let watched = self.watched.len().saturating_mul(WATCHED_ENTRY_BYTES);
+        let watched = crate::limits::vector_bytes(&self.watched);
         let capture = self.capture.as_ref().map_or(0, |capture| held_allocation(capture.held_bytes()));
         self.committed
             .held_bytes()
