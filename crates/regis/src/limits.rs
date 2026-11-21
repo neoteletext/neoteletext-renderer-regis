@@ -170,8 +170,8 @@ pub(crate) const fn ordered_map_root_bytes(key: usize, value: usize) -> usize {
 /// [`MAX_MACROGRAPH_BYTES`] each), a polygon fill's vertices grown by
 /// doubling, a quoted string and an extent kept by the lexer (each held
 /// twice, as read and as a token), the events and replies of one feeding
-/// call, and [`SMALL_STACK_ENTRIES`] entries of the small stacks, each
-/// entry at most [`SMALL_STACK_ENTRY_BYTES`].
+/// call, and `SMALL_STACK_ENTRIES` entries of the small stacks, each
+/// entry at most `SMALL_STACK_ENTRY_BYTES`.
 pub const INTERPRETER_HEAP_BYTES: usize = (4 * MAX_MACROGRAPH_BYTES + MACROGRAPHS * ALLOCATION_OVERHEAD_BYTES)
     .saturating_add(held_allocation(2 * MAX_FILL_VERTICES * size_of::<crate::geometry::Point>()))
     .saturating_add(2 * held_allocation(2 * MAX_STRING_BYTES))
