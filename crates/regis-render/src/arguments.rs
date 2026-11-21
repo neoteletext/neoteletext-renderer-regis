@@ -134,6 +134,35 @@ mod tests {
     }
 
     #[test]
+    fn the_default_rate_and_the_pace_are_read_with_their_bounds() {
+        let arguments =
+            parse(&["--frames", "9", "--default-rate", "32767", "--pace", "1200/600", "in", "out"]).unwrap();
+        assert_eq!(arguments.default_rate, Some(32_767));
+        assert_eq!(arguments.pace, Some(regis::Pace { bytes: 1200, ticks: 600 }));
+        let arguments = parse(&["--frames", "9", "--default-rate", "0", "in", "out"]).unwrap();
+        assert_eq!((arguments.default_rate, arguments.pace), (Some(0), None));
+        let arguments = parse(&["--frames", "9", "--pace", "4294967295/4294967295", "in", "out"]).unwrap();
+        assert_eq!(arguments.pace, Some(regis::Pace { bytes: u32::MAX, ticks: u32::MAX }));
+        assert_eq!(parse(&["--frames", "9", "in", "out"]).unwrap().default_rate, None);
+        for bad in [
+            &["--default-rate", "1", "in", "out"][..],
+            &["--pace", "1/1", "in", "out"],
+            &["--frames", "9", "--default-rate", "32768", "in", "out"],
+            &["--frames", "9", "--default-rate", "", "in", "out"],
+            &["--frames", "9", "--pace", "0/1", "in", "out"],
+            &["--frames", "9", "--pace", "1/0", "in", "out"],
+            &["--frames", "9", "--pace", "/1", "in", "out"],
+            &["--frames", "9", "--pace", "1/", "in", "out"],
+            &["--frames", "9", "--pace", " 1/1", "in", "out"],
+            &["--frames", "9", "--pace", "1/1/1", "in", "out"],
+            &["--frames", "9", "--pace"],
+            &["--frames", "9", "--default-rate"],
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn mistakes_are_refused() {
         assert!(parse(&["in"]).is_err());
         assert!(parse(&["--bogus", "in", "out"]).is_err());

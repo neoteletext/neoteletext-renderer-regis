@@ -54,6 +54,8 @@ struct Sequence {
     script: Option<&'static str>,
     frames: u32,
     step: u32,
+    /// The options given beside `--frames` and `--frame-step`.
+    options: &'static [&'static str],
 }
 
 const ATTRIBUTES: Sequence = Sequence {
@@ -62,14 +64,41 @@ const ATTRIBUTES: Sequence = Sequence {
     script: Some("attributes.script"),
     frames: 18,
     step: 2,
+    options: &[],
 };
-const LAYERS: Sequence =
-    Sequence { name: "layers", picture: "layers.regis", script: Some("layers.script"), frames: 15, step: 1 };
+const LAYERS: Sequence = Sequence {
+    name: "layers",
+    picture: "layers.regis",
+    script: Some("layers.script"),
+    frames: 15,
+    step: 1,
+    options: &[],
+};
 const CYCLE: Sequence =
-    Sequence { name: "cycle", picture: "cycle.regis", script: Some("cycle.script"), frames: 14, step: 1 };
-const CYCLE_ONCE: Sequence =
-    Sequence { name: "cycle-once", picture: "cycle.regis", script: Some("cycle-once.script"), frames: 9, step: 1 };
-const PAINT: Sequence = Sequence { name: "paint", picture: "paint.regis", script: None, frames: 30, step: 2 };
+    Sequence { name: "cycle", picture: "cycle.regis", script: Some("cycle.script"), frames: 14, step: 1, options: &[] };
+const CYCLE_ONCE: Sequence = Sequence {
+    name: "cycle-once",
+    picture: "cycle.regis",
+    script: Some("cycle-once.script"),
+    frames: 9,
+    step: 1,
+    options: &[],
+};
+const PAINT: Sequence =
+    Sequence { name: "paint", picture: "paint.regis", script: None, frames: 30, step: 2, options: &[] };
+/// Drawings with no `T`, with `T0` and with `T4`, and a child waiting for
+/// its parent, under a default paint rate of 20 (REQ-7025).
+const DEFAULT_RATE: Sequence = Sequence {
+    name: "default-rate",
+    picture: "default-rate.regis",
+    script: None,
+    frames: 36,
+    step: 2,
+    options: &["--default-rate", "20"],
+};
+/// A ReGIS v1 picture fed at 2 bytes a tick (REQ-7024).
+const PACE: Sequence =
+    Sequence { name: "pace", picture: "pace.regis", script: None, frames: 40, step: 4, options: &["--pace", "2/1"] };
 
 /// Plays a sequence into a new folder and returns its images by tick.
 fn play(sequence: &Sequence, folder: &str) -> BTreeMap<u32, Vec<u8>> {
@@ -81,6 +110,7 @@ fn play(sequence: &Sequence, folder: &str) -> BTreeMap<u32, Vec<u8>> {
     if let Some(script) = sequence.script {
         command.arg("--script").arg(fixture(script));
     }
+    command.args(sequence.options);
     let output = command.arg(fixture(sequence.picture)).arg(folder.join("image.ppm")).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let report = String::from_utf8_lossy(&output.stderr);
@@ -272,4 +302,69 @@ fn a_drawing_with_two_children_painted_gradually_is_the_golden_sequence() {
     // The finished picture stays as it is.
     // Checksums, so that a failure does not print two images.
     assert_eq!(fnv(&images[&28]), fnv(&images[&30]));
+}
+
+/// REQ-7025: with a default paint rate, a drawing with no `T` paints at
+/// it, one with `T0` at once and one with `T4` at its own rate, and a
+/// child waits for its parent painting at the default.
+#[test]
+fn drawings_under_a_default_paint_rate_are_the_golden_sequence() {
+    let images = held_to_golden(&DEFAULT_RATE);
+    let ticks: Vec<u32> = (0..=36).step_by(2).collect();
+    assert_eq!(images.keys().copied().collect::<Vec<_>>(), ticks);
+    let background = pixel(&images[&0], 0, 0);
+    let painted = |tick: u32, x: usize, y: usize| pixel(&images[&tick], x, y) != background;
+    let first = |x: usize, y: usize| ticks.iter().copied().find(|tick| painted(*tick, x, y));
+    // Drawing 4, with T0: whole before any tick.
+    assert!(painted(0, 100, 400) && painted(0, 300, 400));
+    // Drawing 1, with no T, at the default 20 (2,000 units a second): its
+    // outline of about 800 pixels takes about 24 ticks, its first side
+    // before its last, whose next-to-last pixel is (100, 101).
+    assert!(!painted(0, 110, 100));
+    let first_side = first(110, 100).unwrap();
+    let last_side = first(100, 101).unwrap();
+    assert!(first_side < last_side && (24..=26).contains(&last_side), "{first_side}, {last_side}");
+    // Child 2, with T0, waits for its parent and then appears whole, in
+    // the image of the parent's last pixels or the next (the outline
+    // costs a few units more than the 800 pixels the next-to-last one
+    // needs).
+    let child = first(125, 130).unwrap();
+    assert!(last_side <= child && child <= last_side + 2, "{last_side}, {child}");
+    assert_eq!(first(375, 130), Some(child));
+    // Drawing 3, with T4 (400 units a second), takes 30 ticks for its 201
+    // pixels: it grows from its left end at its own rate, not the default.
+    let line_start = first(102, 300).unwrap();
+    let line_end = first(300, 300).unwrap();
+    assert!(line_start <= 2 && (30..=32).contains(&line_end), "{line_start}, {line_end}");
+    assert!(painted(16, 200, 300) && !painted(14, 200, 300), "half the line at about tick 15");
+    // Finished, it stays as it is.
+    assert_eq!(fnv(&images[&34]), fnv(&images[&36]));
+}
+
+/// REQ-7024: a ReGIS v1 picture fed at a pace, two bytes a tick from tick
+/// 0: each image shows the bytes delivered by its tick, and the last is
+/// the picture fed at once.
+#[test]
+fn a_picture_fed_at_a_pace_is_the_golden_sequence() {
+    let images = held_to_golden(&PACE);
+    let background = pixel(&images[&0], 0, 0);
+    // Nothing is fed before the first tick: only the background.
+    assert!((0..800).all(|x| pixel(&images[&0], x, 100) == background));
+    // The first line's 25 bytes are delivered by tick 13: not at 12, by 16.
+    assert_eq!(pixel(&images[&12], 400, 100), background);
+    assert_ne!(pixel(&images[&16], 400, 100), background);
+    // The second line's bytes end at byte 45, tick 23.
+    assert_eq!(pixel(&images[&20], 400, 200), background);
+    assert_ne!(pixel(&images[&24], 400, 200), background);
+    let distinct: std::collections::BTreeSet<&Vec<u8>> = images.values().collect();
+    assert!(distinct.len() >= 4, "only {} distinct images", distinct.len());
+    // All 67 bytes are fed by tick 34: the last images are the picture
+    // fed at once.
+    let at_once = play(
+        &Sequence { name: "pace-at-once", picture: "pace.regis", script: None, frames: 1, step: 1, options: &[] },
+        "golden-pace-at-once",
+    );
+    assert_eq!(fnv(&images[&36]), fnv(&at_once[&0]));
+    assert_eq!(fnv(&images[&40]), fnv(&at_once[&0]));
+    assert_ne!(fnv(&images[&32]), fnv(&at_once[&0]));
 }
