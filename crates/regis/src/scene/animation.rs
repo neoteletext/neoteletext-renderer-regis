@@ -331,6 +331,12 @@ impl Scene {
         })
     }
 
+    /// The drawing a committed drawing is a child of (`P`), 0 for a
+    /// top-level drawing.
+    pub(crate) fn parent(&self, number: u16) -> Option<u16> {
+        Some(self.committed.get(number)?.parent)
+    }
+
     /// The label of a committed drawing (`U`), if it has one (DEC-6638
     /// item 6).
     pub(crate) fn label(&self, number: u16) -> Option<String> {

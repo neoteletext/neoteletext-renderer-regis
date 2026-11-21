@@ -215,6 +215,23 @@ impl Terminal {
         self.scene.committed_drawing(number)
     }
 
+    /// The numbered drawing that numbered drawing `number` is a child of,
+    /// as the last successful commit left it: the attribute `P`, 0 for a
+    /// top-level drawing. `None` when the drawing does not exist. The pick
+    /// record names one drawing at a pixel (`docs/regis-v2.md`, "Picking");
+    /// a receiver that must know every drawing the pixel is inside, as a
+    /// page rule table's pointer triggers must (neoteletext-common
+    /// `docs/page-rules.md`, RULE-12: a drawing is under the pointer when
+    /// the pick record names it or a drawing that has it as an ancestor),
+    /// follows this from the drawing named up to a top-level one, which is
+    /// at most [`MAX_DRAWING_DEPTH`] steps.
+    ///
+    /// [`MAX_DRAWING_DEPTH`]: crate::limits::MAX_DRAWING_DEPTH
+    #[must_use]
+    pub fn parent(&self, number: u16) -> Option<u16> {
+        self.scene.parent(number)
+    }
+
     /// The label a screen reader speaks for numbered drawing `number`, as
     /// the last successful commit left it: the attribute `U` (DEC-6638
     /// item 6, `docs/regis-v2.md`, "Attributes"). `None` when the drawing
