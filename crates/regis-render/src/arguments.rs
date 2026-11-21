@@ -1,7 +1,10 @@
 //! The command line.
 
+use regis::Pace;
+use regis::limits::MAX_PAINT_RATE;
+
 /// How to call the program.
-pub(crate) const USAGE: &str = "usage: regis-render [--font FILE] [--teletext ENGINE] [--page 0|1] [--macrograph-reports] [--frames TICKS [--frame-step K] [--script FILE|-]] INPUT OUTPUT.png|OUTPUT.ppm";
+pub(crate) const USAGE: &str = "usage: regis-render [--font FILE] [--teletext ENGINE] [--page 0|1] [--macrograph-reports] [--frames TICKS [--frame-step K] [--script FILE|-] [--default-rate N] [--pace BYTES/TICKS]] INPUT OUTPUT.png|OUTPUT.ppm";
 
 /// What the command line asked for.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -19,6 +22,13 @@ pub(crate) struct Arguments {
     pub(crate) frame_step: u32,
     /// The file of timed operations; `-` for standard input.
     pub(crate) script: Option<String>,
+    /// The default paint rate, taken by every numbered drawing with no
+    /// `T` of its own (DEC-7031 item 2); none if not given.
+    pub(crate) default_rate: Option<u16>,
+    /// The pace the input is fed at while the sequence plays, as a line
+    /// of a stated speed would deliver it (DEC-7031 item 2); fed whole
+    /// before tick 0 if not given.
+    pub(crate) pace: Option<Pace>,
     pub(crate) input: String,
     pub(crate) output: String,
 }
@@ -41,6 +51,8 @@ impl Arguments {
                 "--frames" => arguments.frames = Some(ticks(words.next(), "--frames")?),
                 "--frame-step" => arguments.frame_step = ticks(words.next(), "--frame-step")?,
                 "--script" => arguments.script = Some(words.next().ok_or("--script needs a file")?),
+                "--default-rate" => arguments.default_rate = Some(rate(words.next())?),
+                "--pace" => arguments.pace = Some(pace(words.next())?),
                 option if option.starts_with("--") => return Err(format!("unknown option {option}")),
                 _ => files.push(word),
             }
@@ -50,6 +62,9 @@ impl Arguments {
         arguments.output = output;
         if arguments.frames.is_none() && (arguments.script.is_some() || arguments.frame_step != 1) {
             return Err("--script and --frame-step need --frames".into());
+        }
+        if arguments.frames.is_none() && (arguments.default_rate.is_some() || arguments.pace.is_some()) {
+            return Err("--default-rate and --pace need --frames".into());
         }
         if arguments.frames.is_some() && arguments.page.is_some() {
             return Err("--frames plays the picture on show; --page cannot be given with it".into());
@@ -63,6 +78,24 @@ fn ticks(word: Option<String>, option: &str) -> Result<u32, String> {
     let word = word.ok_or_else(|| format!("{option} needs a number of ticks"))?;
     let range = 1..=crate::play::MAX_TICKS;
     word.parse().ok().filter(|ticks| range.contains(ticks)).ok_or_else(|| format!("{option}: {word} is not 1 to 36000"))
+}
+
+/// A paint rate: 0 to 32,767, as the attribute `T` takes.
+fn rate(word: Option<String>) -> Result<u16, String> {
+    let word = word.ok_or("--default-rate needs a paint rate")?;
+    let range = 0..=MAX_PAINT_RATE;
+    word.parse()
+        .ok()
+        .filter(|rate| range.contains(rate))
+        .ok_or_else(|| format!("--default-rate: {word} is not 0 to 32767"))
+}
+
+/// A pace, `BYTES/TICKS`: each a whole number of 1 or more.
+fn pace(word: Option<String>) -> Result<Pace, String> {
+    let word = word.ok_or("--pace needs BYTES/TICKS")?;
+    let part = |part: &str| part.parse::<u32>().ok().filter(|part| *part != 0);
+    let parts = word.split_once('/').and_then(|(bytes, ticks)| Some(Pace { bytes: part(bytes)?, ticks: part(ticks)? }));
+    parts.ok_or_else(|| format!("--pace: {word} is not BYTES/TICKS, each 1 or more"))
 }
 
 #[cfg(test)]

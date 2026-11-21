@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! regis-render [--font FILE] [--teletext ENGINE] [--page N] [--macrograph-reports] INPUT OUTPUT.png|OUTPUT.ppm
-//! regis-render --frames TICKS [--frame-step K] [--script FILE|-] INPUT OUTPUT.png|OUTPUT.ppm
+//! regis-render --frames TICKS [--frame-step K] [--script FILE|-] [--default-rate N] [--pace BYTES/TICKS] INPUT OUTPUT.png|OUTPUT.ppm
 //! ```
 //!
 //! With `--frames` the picture's animation is played for that many ticks
@@ -11,6 +11,12 @@
 //! extension (neoteletext-common `docs/animation.md`, ANIM-18). The
 //! script is a text file of timed operations on numbered drawings, one a
 //! line: `<tick> <operation> <drawing> ...`.
+//!
+//! With `--frames`, `--default-rate N` gives every numbered drawing that
+//! sets no `T` the paint rate `N`, and `--pace BYTES/TICKS` feeds the
+//! input `BYTES` bytes every `TICKS` ticks from tick 0, as a serial line
+//! would deliver it, where otherwise all of it is read before tick 0
+//! (DEC-7031 item 2; REQ-7024, REQ-7025).
 //!
 //! `--teletext ENGINE` loads NeoTeletext's 55 provided character sets from
 //! the engine's checkout, its code list, its Noto Teletext BDF files and
@@ -47,7 +53,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use arguments::Arguments;
-use regis::{Event, Font, Screen, Terminal};
+use regis::{Event, Font, Replay, Screen, Terminal};
 
 /// The largest input file read: far above any real ReGIS picture.
 const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
@@ -103,17 +109,23 @@ fn run(arguments: &Arguments) -> Result<(), String> {
     }
     terminal.allow_macrograph_reports(arguments.macrograph_reports);
 
+    // Before any byte is read, so that it holds from the first commit.
+    terminal.set_default_paint_rate(arguments.default_rate.unwrap_or(0));
+
     let input = read_bounded(&arguments.input)?;
     let mut screen = Screen::new();
     // A stream with a device control string is fed as a terminal would
     // receive it; anything else is taken to be bare ReGIS commands.
     let framed = input.windows(2).any(|pair| pair == [ESCAPE, b'P']) || input.contains(&DCS);
-    let mut events = if framed { terminal.feed(&mut screen, &input) } else { terminal.feed_regis(&mut screen, &input) };
-    events.extend(terminal.finish(&mut screen));
-    report(&events);
+    // With no pace the replay feeds every byte at once.
+    let mut replay = if framed { Replay::framed() } else { Replay::new() };
+    replay.set_pace(arguments.pace);
+    report(&replay.push(&mut terminal, &mut screen, &input));
+    let mut line = Line { replay, ended: false };
+    line.end_if_idle(&mut terminal, &mut screen);
 
     if let Some(frames) = arguments.frames {
-        return play_frames(arguments, &mut terminal, &screen, frames);
+        return play_frames(arguments, &mut terminal, &mut screen, &mut line, frames);
     }
     // The numbered drawings of ReGIS v2 are painted over the page on show.
     let mut composed = regis::Picture::new();
@@ -167,13 +179,48 @@ fn read_script(path: &str) -> Result<Vec<play::Timed>, String> {
     play::parse(&text).map_err(|error| format!("{path}: {error}"))
 }
 
+/// The input on its way to the terminal: all of it fed already, or held
+/// and fed at a pace as the ticks pass (DEC-7031 item 2).
+struct Line {
+    replay: Replay,
+    /// The terminal has been told the input ended.
+    ended: bool,
+}
+
+impl Line {
+    /// Tells the terminal its input has ended, once the last byte is fed.
+    fn end_if_idle(&mut self, terminal: &mut Terminal, screen: &mut Screen) {
+        if !self.ended && self.replay.idle() {
+            self.ended = true;
+            report(&terminal.finish(screen));
+        }
+    }
+
+    /// One tick passes on the line: the bytes it delivers are fed.
+    fn tick(&mut self, terminal: &mut Terminal, screen: &mut Screen) {
+        if self.ended {
+            return;
+        }
+        report(&self.replay.advance(terminal, screen, 1));
+        self.end_if_idle(terminal, screen);
+    }
+}
+
 /// Plays the picture for `frames` ticks from tick 0: at each tick the
 /// script's operations due are carried out and every cycling drawing
 /// given its frame, an image is written if the tick is one to write, and
-/// then the tick passes for the paint rate (ANIM-18). Nothing in it
-/// depends on a clock or on the machine, so a run's images are the same
-/// every time.
-fn play_frames(arguments: &Arguments, terminal: &mut Terminal, screen: &Screen, frames: u32) -> Result<(), String> {
+/// then the tick passes for the paint rate and for the line, which
+/// delivers the bytes a pace allows (ANIM-18; DEC-7031 item 2). The image
+/// of tick `n` so shows the bytes delivered in `n` ticks, each drawing
+/// they committed painted for the ticks since. Nothing in it depends on a
+/// clock or on the machine, so a run's images are the same every time.
+fn play_frames(
+    arguments: &Arguments,
+    terminal: &mut Terminal,
+    screen: &mut Screen,
+    line: &mut Line,
+    frames: u32,
+) -> Result<(), String> {
     let script = match &arguments.script {
         Some(path) => read_script(path)?,
         None => Vec::new(),
@@ -193,10 +240,16 @@ fn play_frames(arguments: &Arguments, terminal: &mut Terminal, screen: &Screen, 
             written = written.saturating_add(1);
         }
         if tick != frames {
+            // The paintings under way earn the tick before the line's
+            // bytes commit new ones, which begin with no tick behind them.
             let _ = terminal.advance_ticks(1);
+            line.tick(terminal, screen);
         }
     }
     eprintln!("{written} images of {frames} ticks; {} operations did nothing", player.ignored);
+    if !line.replay.idle() {
+        eprintln!("the pace left {} bytes of the input unread at the last tick", line.replay.held_bytes());
+    }
     Ok(())
 }
 
