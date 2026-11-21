@@ -263,6 +263,13 @@ pub const PAINT_RATE_UNIT: u64 = 100;
 /// The largest paint rate: a 16-bit signed value, as every attribute is
 /// (DEC-6382 item 1; ANIM-10).
 pub const MAX_PAINT_RATE: u16 = 32_767;
+/// The numbered drawings a receiver may watch at once for their painting
+/// finishing ([`Terminal::watch_painted`](crate::Terminal::watch_painted);
+/// DEC-7031 items 2 and 4): as many as one page's rule table may name in
+/// its "painted" triggers, the engine's `MAX_PAINT_WATCHED`, which a
+/// caller linking both asserts equal. Reports are of watched drawings
+/// alone, so their number in any one call is bounded by this.
+pub const MAX_WATCHED_PAINTINGS: usize = 32;
 
 /// Bytes of a numbered drawing's label, the attribute `U`: the text a
 /// screen reader speaks for it (DEC-6638 item 6, row 6.1). The same bound

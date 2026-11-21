@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use super::Scene;
 use super::paint::Walk;
-use super::stage::{Contents, Stage};
+use super::stage::{Contents, Drawing, Stage};
 use crate::limits::{
     LAYERS, MAX_ANIMATED_DRAWINGS, MAX_DRAWING_DEPTH, MAX_OBJECT_FRAMES, MAX_PAINT_RATE, PAINT_RATE_UNIT,
     TICKS_PER_SECOND,
@@ -236,10 +236,26 @@ impl Scene {
     /// would take a repaint over the cap on one repaint (and then the
     /// state is kept without its shown part).
     pub(crate) fn set_animation(&mut self, number: u16, state: AnimationState) -> bool {
+        let hidden = self.watched_hidden();
+        let kept = self.keep_animation(number, state);
+        self.open_shown(&hidden);
+        kept
+    }
+
+    /// Forgets a drawing's animation state: it is painted as committed.
+    pub(crate) fn clear_animation(&mut self, number: u16) {
+        let hidden = self.watched_hidden();
+        self.forget_animation(number);
+        self.open_shown(&hidden);
+    }
+
+    /// Keeps a drawing's animation state, as [`Scene::set_animation`]
+    /// says.
+    fn keep_animation(&mut self, number: u16, state: AnimationState) -> bool {
         let state = state.bounded();
         if state == AnimationState::default() {
             let existed = self.committed.get(number).is_some();
-            self.clear_animation(number);
+            self.forget_animation(number);
             return existed;
         }
         let full = self.animation.len() >= MAX_ANIMATED_DRAWINGS && !self.animation.contains_key(&number);
@@ -262,8 +278,8 @@ impl Scene {
         kept
     }
 
-    /// Forgets a drawing's animation state: it is painted as committed.
-    pub(crate) fn clear_animation(&mut self, number: u16) {
+    /// Removes a drawing's animation state.
+    fn forget_animation(&mut self, number: u16) {
         if !self.animation.contains_key(&number) {
             return;
         }
@@ -273,7 +289,7 @@ impl Scene {
     }
 
     /// Whether a drawing is shown with every drawing up its parent chain.
-    fn shown_up_the_chain(&self, number: u16) -> bool {
+    pub(super) fn shown_up_the_chain(&self, number: u16) -> bool {
         visible_up_the_chain(&self.committed, &self.animation, number)
     }
 
@@ -376,8 +392,16 @@ impl Scene {
     /// state the batch wrote over are forgotten, with the state of every
     /// drawing that no longer exists; a state that would now show more
     /// than the cap on one repaint allows loses its shown part; and the
-    /// drawings whose painting starts are found.
-    pub(super) fn committed_over_animation(&mut self, written: &BTreeMap<u16, Written>, before: &[Rated]) {
+    /// drawings whose painting starts are found, with the watched
+    /// drawings whose episode opens or ends. `before` and `watched` are
+    /// the drawings with a rate in force and the watched drawings as they
+    /// stood before the commit.
+    pub(super) fn committed_over_animation(
+        &mut self,
+        written: &BTreeMap<u16, Written>,
+        before: &[Rated],
+        watched: &[Rated],
+    ) {
         for (number, written) in written {
             let Some(state) = self.animation.get_mut(number) else { continue };
             let Written::Parts { position, shown, order } = *written else {
@@ -404,7 +428,9 @@ impl Scene {
         }
         self.forget_empty_states();
         self.forget_unrated();
+        self.open_changed(watched);
         self.start_painting(before);
+        self.settle_watched();
     }
 
     /// Finds again whether any drawing has a paint rate in force, and
@@ -431,13 +457,15 @@ impl Scene {
     /// it already has starts nothing.
     pub(crate) fn set_default_paint_rate(&mut self, rate: u16) {
         let rate = rate.min(MAX_PAINT_RATE);
-        if rate == self.default_rate {
-            return;
+        if rate != self.default_rate {
+            let before = self.rated();
+            let watched = self.watched_standing();
+            self.default_rate = rate;
+            self.forget_unrated();
+            self.open_changed(&watched);
+            self.start_painting(&before);
         }
-        let before = self.rated();
-        self.default_rate = rate;
-        self.forget_unrated();
-        self.start_painting(&before);
+        self.settle_watched();
     }
 
     /// A state that sets nothing is no state: its place is freed.
@@ -468,20 +496,37 @@ impl Scene {
         }
         let default_rate = self.default_rate;
         let rated = self.committed.drawings().filter(|(_, drawing)| drawing.rate_in_force(default_rate) != 0);
-        rated
-            .map(|(number, drawing)| Rated {
-                number,
-                contents: drawing.contents.clone(),
-                rate: drawing.rate_in_force(default_rate),
-                visible: visible_up_the_chain(&self.committed, &self.animation, number),
-            })
-            .collect()
+        rated.map(|(number, drawing)| self.standing(number, drawing)).collect()
     }
 
-    /// Notes the drawings with a paint rate whose painting starts at a
-    /// commit: each that is new, whose contents or rate changed, or that
-    /// became visible (DEC-6382 item 2). A drawing that only moved,
-    /// changed parent, clip or depth goes on as it was.
+    /// What a drawing's painting depends on, as it stands.
+    pub(super) fn standing(&self, number: u16, drawing: &Drawing) -> Rated {
+        Rated {
+            number,
+            contents: drawing.contents.clone(),
+            rate: drawing.rate_in_force(self.default_rate),
+            visible: self.shown_up_the_chain(number),
+        }
+    }
+
+    /// Whether a drawing's painting is owed since `before`, a list in
+    /// order of number of drawings as they stood: it is not in the list,
+    /// its contents or its rate in force changed, or it became visible
+    /// (DEC-6382 item 2). A drawing that only moved, changed parent, clip
+    /// or depth goes on as it was.
+    pub(super) fn starts_since(&self, before: &[Rated], number: u16, drawing: &Drawing) -> bool {
+        let was = before.binary_search_by_key(&number, |rated| rated.number).ok().and_then(|at| before.get(at));
+        was.is_none_or(|was| {
+            !Contents::ptr_eq(&was.contents, &drawing.contents)
+                || was.rate != drawing.rate_in_force(self.default_rate)
+                || (!was.visible && self.shown_up_the_chain(number))
+        })
+    }
+
+    /// Notes the drawings with a paint rate in force whose painting
+    /// starts at a commit or a change of the default rate: each that is
+    /// new, whose contents or rate changed, or that became visible
+    /// (DEC-6382 item 2).
     fn start_painting(&mut self, before: &[Rated]) {
         if !self.rated {
             self.starting.clear();
@@ -489,17 +534,7 @@ impl Scene {
         }
         let default_rate = self.default_rate;
         for (number, drawing) in self.committed.drawings() {
-            let rate = drawing.rate_in_force(default_rate);
-            if rate == 0 {
-                continue;
-            }
-            let was = before.binary_search_by_key(&number, |rated| rated.number).ok().and_then(|at| before.get(at));
-            let starts = was.is_none_or(|was| {
-                !Contents::ptr_eq(&was.contents, &drawing.contents)
-                    || was.rate != rate
-                    || (!was.visible && visible_up_the_chain(&self.committed, &self.animation, number))
-            });
-            if starts {
+            if drawing.rate_in_force(default_rate) != 0 && self.starts_since(before, number, drawing) {
                 self.starting.insert(number);
             }
         }
@@ -515,18 +550,27 @@ impl Scene {
             return;
         }
         let starting = core::mem::take(&mut self.starting);
-        // Each entry: a drawing, and whether a drawing above it starts.
-        let mut walk: Vec<(u16, bool)> = self.committed.child_numbers(0).map(|number| (number, false)).collect();
-        while let Some((number, under)) = walk.pop() {
+        // Each entry: a drawing, whether a drawing above it starts, and
+        // whether the painting of one above it began here.
+        let top = self.committed.child_numbers(0);
+        let mut walk: Vec<(u16, bool, bool)> = top.map(|number| (number, false, false)).collect();
+        while let Some((number, under, began_above)) = walk.pop() {
             let Some(drawing) = self.committed.get(number) else { continue };
             let starts = under || starting.contains(&number);
-            if starts && drawing.rate_in_force(self.default_rate) != 0 {
+            let begins = starts && drawing.rate_in_force(self.default_rate) != 0;
+            if begins {
                 self.painting.insert(number, 0);
             }
-            walk.extend(self.committed.child_numbers(number).map(|child| (child, starts)));
+            // A watched drawing waits again for a painting that begins
+            // above it, or its own: its episode opens (DEC-7031 item 2).
+            let began = began_above || begins;
+            if began && let Some(watch) = self.watched.get_mut(&number) {
+                watch.open = true;
+            }
+            walk.extend(self.committed.child_numbers(number).map(|child| (child, starts, began)));
         }
         // A drawing that costs nothing to paint is finished at once.
-        let _ = self.advance_ticks(0);
+        let _ = self.advance_painting(0);
     }
 
     /// Tells the scene that ticks of the presentation clock have passed:
@@ -535,6 +579,14 @@ impl Scene {
     /// start with the ticks left over. True while a drawing that is shown
     /// is still being painted.
     pub(crate) fn advance_ticks(&mut self, ticks: u32) -> bool {
+        let still = self.advance_painting(ticks);
+        self.settle_watched();
+        still
+    }
+
+    /// Advances every drawing being painted gradually, as
+    /// [`Scene::advance_ticks`] says.
+    fn advance_painting(&mut self, ticks: u32) -> bool {
         self.settle_starting();
         if self.painting.is_empty() {
             return false;

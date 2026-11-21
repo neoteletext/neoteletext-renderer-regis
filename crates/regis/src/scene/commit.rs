@@ -94,6 +94,7 @@ impl Scene {
     pub(super) fn commit(&mut self, base: &mut Machine) -> Result<(), Failure> {
         let batch = self.batch.take();
         let before = self.rated();
+        let watched = self.watched_standing();
         let staged_bytes = core::mem::take(&mut self.staged_bytes);
         let result = self.check(batch.as_ref().and_then(|batch| batch.failure), staged_bytes, base);
         match result {
@@ -108,7 +109,7 @@ impl Scene {
                 self.committed = self.staged.clone();
                 self.commits = self.commits.wrapping_add(1);
                 let written = batch.map(|batch| batch.written).unwrap_or_default();
-                self.committed_over_animation(&written, &before);
+                self.committed_over_animation(&written, &before, &watched);
                 Ok(())
             }
             Err(failure) => {

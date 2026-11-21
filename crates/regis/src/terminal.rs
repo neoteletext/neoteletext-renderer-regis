@@ -130,7 +130,7 @@ impl Terminal {
     /// The memory this terminal holds, in bytes, at most: its own
     /// structure, the numbered drawings of the committed and the staged
     /// scene with their contents, a definition being received, the
-    /// receiver's painting state, the working state of its two
+    /// receiver's painting state with the drawings it watches, the working state of its two
     /// interpreters, and the font and provided sets given to it (each kept
     /// twice). A server that keeps many terminals or validators counts
     /// each at this figure. Without the font and the provided sets it is
@@ -323,6 +323,49 @@ impl Terminal {
     #[must_use]
     pub const fn default_paint_rate(&self) -> u16 {
         self.scene.default_paint_rate()
+    }
+
+    /// Names the numbered drawings whose painting finishing is to be
+    /// reported by [`Terminal::take_painted`], in place of those named
+    /// before: at most [`MAX_WATCHED_PAINTINGS`] different numbers, which
+    /// need not exist yet (DEC-7031 item 2; REQ-7026). It returns false,
+    /// with the watched drawings left as they were, when more are named.
+    ///
+    /// A watched drawing is reported when it is whole: it exists, it is
+    /// shown with every drawing up its parent chain (the animation state
+    /// counted), and neither it nor a drawing above it is still being
+    /// painted gradually or about to be. Each episode is reported once.
+    /// An episode opens when the drawing is newly watched (so a drawing
+    /// already whole is reported once after being named); when a commit
+    /// makes it new, redefines its contents, changes its rate in force or
+    /// makes it visible; when the animation state shows it or a drawing
+    /// above it; when a change of the default paint rate changes its rate
+    /// in force; and when the painting of a drawing above it starts. It
+    /// closes, and the drawing is reported, at the first commit,
+    /// [`Terminal::advance_ticks`], [`Terminal::set_animation`],
+    /// [`Terminal::clear_animation`] or
+    /// [`Terminal::set_default_paint_rate`] after which the drawing is
+    /// whole: a drawing with no rate in force is reported by the very
+    /// call that made it appear. A hidden drawing's episode waits until
+    /// it is shown, and a deleted drawing's is dropped. A drawing watched
+    /// before and named again keeps its episode.
+    ///
+    /// [`MAX_WATCHED_PAINTINGS`]: crate::limits::MAX_WATCHED_PAINTINGS
+    pub fn watch_painted(&mut self, numbers: &[u16]) -> bool {
+        self.scene.watch_painted(numbers)
+    }
+
+    /// The watched drawings that became whole since the last call, in
+    /// ascending order of number, each once for each episode
+    /// ([`Terminal::watch_painted`]; DEC-7031 item 2). At most
+    /// [`MAX_WATCHED_PAINTINGS`](crate::limits::MAX_WATCHED_PAINTINGS)
+    /// numbers. A caller asks after feeding bytes and after each of the
+    /// calls that can close an episode. A drawing that became whole and
+    /// was then deleted, or is being painted again, before the caller
+    /// asked is still reported; one no longer watched is not.
+    #[must_use = "each drawing is reported once"]
+    pub fn take_painted(&mut self) -> Vec<u16> {
+        self.scene.take_painted()
     }
 
     /// Makes the picture to show: the displayed page of `base`, the screen
