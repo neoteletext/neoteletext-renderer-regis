@@ -270,6 +270,14 @@ pub const MAX_PAINT_RATE: u16 = 32_767;
 /// caller linking both asserts equal. Reports are of watched drawings
 /// alone, so their number in any one call is bounded by this.
 pub const MAX_WATCHED_PAINTINGS: usize = 32;
+/// Bytes of a stream a [`Replay`](crate::Replay) holds while it feeds
+/// them at a pace (DEC-7031 items 1 to 3): 256 KiB, the figure the NAPLPS
+/// renderer holds for a stream that is waiting, which a receiver linking
+/// both asserts equal. A push that would hold more ends the pacing and
+/// feeds everything at once, so a replay holds no more than this and
+/// lasts no longer than this many bytes take at its pace: 524,288 ticks
+/// at 30 bytes a second, the slowest line a page may state.
+pub const MAX_REPLAY_HELD_BYTES: usize = 262_144;
 
 /// Bytes of a numbered drawing's label, the attribute `U`: the text a
 /// screen reader speaks for it (DEC-6638 item 6, row 6.1). The same bound
